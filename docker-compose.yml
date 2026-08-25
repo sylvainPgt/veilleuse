@@ -1,0 +1,9 @@
+services:
+  veilleuse:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      VEILLEUSE_HEARTBEAT_TIMEOUT: "45"
+      VEILLEUSE_ESCALATION_DELAY: "90"
+    restart: unless-stopped

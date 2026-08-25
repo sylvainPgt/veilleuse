@@ -1,0 +1,132 @@
+<p align="center">
+  <img src="app/static/icon.svg" width="96" alt="Veilleuse">
+</p>
+<h1 align="center">Veilleuse</h1>
+<p align="center"><strong>Le babyphone collectif des soirées en gîte.</strong><br>
+Les enfants dorment dans les chalets, les parents dansent dans la salle, tout le monde veille.</p>
+
+<p align="center">
+  <a href="#démarrage-rapide">Démarrage rapide</a> ·
+  <a href="#le-soir-de-la-fête">Le soir de la fête</a> ·
+  <a href="#comment-ça-marche">Comment ça marche</a> ·
+  <a href="#déploiement">Déploiement</a> ·
+  <a href="#limites-connues">Limites connues</a>
+</p>
+
+---
+
+<p align="center">
+  <img src="docs/01-accueil.png" width="180" alt="Accueil">&nbsp;
+  <img src="docs/04-chalet-veille.png" width="180" alt="Chalet en veille">&nbsp;
+  <img src="docs/06-salle-alerte.png" width="180" alt="Alerte côté salle">&nbsp;
+  <img src="docs/08-salle-jyvais.png" width="180" alt="J'y vais">
+</p>
+<p align="center"><img src="docs/10-sono-alerte.png" width="740" alt="Écran de la sono"></p>
+
+## Le problème
+
+Une fête dans un domaine de chalets. À 22 h, on couche les enfants dans les chalets, à 100 ou 300 mètres de la salle. La musique est à fond. Un babyphone classique ne porte pas si loin et personne ne l'entendrait de toute façon. On ne veut pas laisser les enfants seuls, on ne veut pas non plus qu'un parent sacrifie sa soirée à chaque chalet.
+
+## La solution
+
+Chaque couple laisse un téléphone dans le chalet et garde l'autre à la soirée. **Veilleuse** est une webapp, sans installation ni compte : un code de soirée, un prénom, et deux rôles.
+
+- **Je reste au chalet** — le téléphone écoute. Il analyse le micro localement et n'envoie que de minuscules messages : un battement de cœur toutes les 15 secondes, une alerte quand un bruit dépasse le seuil, un clip audio de 4 secondes si le réseau le permet.
+- **Je vais à la salle** — le téléphone reçoit. Une tuile par chalet, verte / orange / rouge. Quand un chalet sonne, tout le monde le voit, le couple concerné reçoit une alerte forte, les autres une alerte douce. Le premier qui tape **« J'y vais »** prévient tous les autres.
+- **Écran de la sono** — le même tableau en plein écran sur le PC qui passe la musique. Un chalet qui sonne remplit l'écran de rouge avec son nom en géant, le DJ peut baisser le son et l'annoncer au micro.
+
+Et surtout, **le silence est une alerte** : si un chalet ne donne plus de nouvelles pendant 45 secondes (téléphone verrouillé, batterie vide, réseau perdu), il passe en « chalet muet » sur tous les écrans. Un babyphone qui se tait ne rassure personne.
+
+## Démarrage rapide
+
+```bash
+git clone https://github.com/sylvainPgt/veilleuse.git
+cd veilleuse
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+Ouvrez http://localhost:8000. Pour tester à la maison : le mode chalet sur un téléphone dans une chambre, le mode salle sur un autre, coupez la 4G du premier trente secondes et regardez la tuile passer en « chalet muet », puis revenir.
+
+> Le micro n'est accessible qu'en HTTPS (ou sur `localhost`). Pour tester depuis un téléphone sur le réseau local, passez par un tunnel HTTPS ou déployez directement (voir plus bas).
+
+Avec Docker :
+
+```bash
+docker compose up --build
+```
+
+Tests :
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+## Le soir de la fête
+
+1. Avant la fête, ouvrez l'adresse de l'app sur le téléphone de chaque parent et ajoutez-la à l'écran d'accueil. Choisissez un code de soirée et donnez-le à tout le monde.
+2. Au coucher, sur le téléphone qui reste au chalet : **« Je reste au chalet »**, nom du chalet, prénoms des enfants, réglage de la sensibilité avec le vu-mètre (parler normalement doit rester sous le trait, un pleur doit le dépasser), puis **« Armer la veille »**.
+3. Checklist affichée à l'écran : chargeur branché, mode « Ne pas déranger », écran allumé avec l'app au premier plan, et **un test en tapant dans les mains** — le conjoint doit voir le chalet sonner sur son téléphone avant de partir.
+4. Sur le téléphone qui va à la salle : **« Je vais à la salle »**, tapez sur **« Activer les alertes »** (nécessaire pour que le navigateur ait le droit de sonner et vibrer), choisissez « Mon chalet » dans la liste.
+5. Sur le PC de la sono : **« Écran de la sono »**, puis plein écran.
+6. Quand ça sonne : n'importe qui tape **« J'y vais »**. Si personne ne répond en 90 secondes, l'alerte passe en escalade rouge clignotant sur tous les téléphones. Une fois sur place, **« C'est réglé »**.
+
+Un tour de ronde physique toutes les 30 à 45 minutes reste une bonne idée : l'app détecte les pleurs, pas un enfant qui se lève en silence.
+
+## Comment ça marche
+
+```
+   Chalet Mésange                          Serveur (FastAPI)                      Salle
+ ┌──────────────────┐   hb 15 s (200 o)   ┌──────────────────┐   état complet   ┌──────────────┐
+ │ micro → RMS → dB │ ──────────────────► │ Party            │ ───────────────► │ tuiles       │
+ │ seuil + 1,5 s    │   alert (200 o)     │  ├ Chalet ×N     │   WebSocket      │ overlay      │
+ │ file hors ligne  │ ──────────────────► │  ├ événements    │ ◄─────────────── │ J'y vais     │
+ │ wake lock        │   clip 4 s (≤150 Ko)│  └ watchdog 2 s  │   ack / resolve  │ écran sono   │
+ └──────────────────┘ ──────────────────► └──────────────────┘                  └──────────────┘
+```
+
+**Conçu pour un réseau faible.** La détection se fait sur le téléphone du chalet, jamais en streaming. Ce qui transite est minuscule et passe en 3G. Le clip audio est un bonus envoyé après l'alerte, abandonné s'il est trop gros. Si la connexion tombe, l'émetteur met ses alertes en file et les renvoie à la reconnexion (backoff exponentiel, 1 s → 15 s).
+
+**Détection.** Niveau sonore en RMS converti en dB, lissé avec attaque rapide et retombée douce. Un bruit au-dessus du seuil pendant environ 1,5 seconde cumulée déclenche l'alerte ; un bref creux ne remet pas le compteur à zéro. Un bruit court est signalé en orange sans alerter. Après une alerte, 30 secondes de pause avant la suivante ; une alerte en cours absorbe les nouveaux bruits au lieu de se dupliquer.
+
+**Watchdog serveur.** Toutes les 2 secondes : un chalet sans heartbeat depuis 45 s devient « muet » ; une alerte non acquittée depuis 90 s passe en « escalade ». Les deux délais se règlent par variables d'environnement (`VEILLEUSE_HEARTBEAT_TIMEOUT`, `VEILLEUSE_ESCALATION_DELAY`).
+
+**Aucune donnée conservée.** Tout est en mémoire, rien n'est écrit sur disque, les clips ne survivent pas à l'alerte. Un redémarrage du serveur vide l'état ; les émetteurs se ré-enregistrent automatiquement à la reconnexion.
+
+### Protocole WebSocket (`/ws/{code}`)
+
+| Sens | Message | Rôle |
+|---|---|---|
+| → | `{"type":"register","chalet_id","name","kids"}` | Émetteur : rejoint (ou reprend) un chalet |
+| → | `{"type":"hb","level","battery","threshold"}` | Émetteur : battement de cœur |
+| → | `{"type":"noise","level"}` | Émetteur : bruit court |
+| → | `{"type":"alert","level","clip?","reason?"}` | Émetteur : alerte (le clip peut arriver dans un second message) |
+| → | `{"type":"hello","role":"salle","name"}` | Récepteur : s'identifie |
+| → | `{"type":"ack","chalet_id","by"}` / `resolve` | Récepteur : j'y vais / c'est réglé |
+| ← | `{"type":"state", chalets:[…], events:[…], now}` | Serveur : état complet à chaque changement |
+| ← | `{"type":"level","chalet_id","level","battery","ts"}` | Serveur : mise à jour légère du vu-mètre |
+
+`GET /api/party/{code}` renvoie le même état ; `GET /api/health` pour la supervision.
+
+## Déploiement
+
+Le dépôt contient un `Dockerfile` prêt pour **Coolify**, Dokku, Fly.io, Railway ou n'importe quel hôte Docker : créez une application depuis ce dépôt Git, port `8000`, et activez le HTTPS (indispensable pour le micro, le wake lock et les notifications). Rien d'autre à configurer, pas de base de données.
+
+Prévoyez de tester **sur place, dans un chalet, avec l'opérateur de chaque couple** — « il y a du réseau » vu de l'accueil ne dit rien du chalet du fond. L'app vous le dira en trente secondes : si la tuile est verte, ça passe.
+
+## Limites connues
+
+- **L'app doit rester au premier plan sur le téléphone du chalet**, écran allumé. iOS et Android coupent le micro d'un onglet en arrière-plan. Le wake lock empêche la mise en veille, mais si quelqu'un verrouille l'écran, le chalet passera « muet » au bout de 45 secondes — c'est voulu, on préfère une fausse alerte à un faux silence.
+- **Un appel entrant** sur le téléphone du chalet interrompt le micro (surtout sur iPhone). D'où le mode « Ne pas déranger ».
+- **Les notifications d'une webapp fermée** sont peu fiables sur iPhone. Les récepteurs gardent la page ouverte dans la poche ; l'écran de la sono est là pour ça.
+- **Pas d'écoute en direct** (volontairement) : en réseau faible, un flux continu est la première chose qui casse. Le clip de 4 secondes répond à la question « il pleure vraiment ? ».
+- Ce n'est **pas un dispositif médical ni de sécurité** : c'est un outil d'entraide entre parents pour une soirée, pas un remplacement de la surveillance.
+
+## Pile technique
+
+Python 3.12, FastAPI, WebSockets, et une page HTML/CSS/JS sans framework ni dépendance. Environ 300 lignes de Python, 400 de JavaScript.
+
+## Licence
+
+MIT — faites-en bon usage, et bonne fête.
