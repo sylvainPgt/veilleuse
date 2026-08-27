@@ -31,6 +31,7 @@ ESCALATION_DELAY = float(os.getenv("VEILLEUSE_ESCALATION_DELAY", "90"))     # s 
 NOISE_HOLD = float(os.getenv("VEILLEUSE_NOISE_HOLD", "20"))                 # s pendant lesquels un bruit reste affiché
 LISTEN_HOLD = float(os.getenv("VEILLEUSE_LISTEN_HOLD", "25"))               # s pendant lesquels « X écoute » reste affiché
 LISTEN_SECONDS = float(os.getenv("VEILLEUSE_LISTEN_SECONDS", "10"))         # durée du clip demandé à la volée
+CLIP_TTL = float(os.getenv("VEILLEUSE_CLIP_TTL", "120"))                    # s avant qu'un clip s'efface tout seul
 WATCHDOG_PERIOD = 2.0
 MAX_EVENTS = 60
 MAX_CLIP_BYTES = 200_000  # clip audio base64, on refuse au-delà pour protéger le réseau faible
@@ -185,11 +186,11 @@ class Party:
         self.add_event("ack", chalet, by=chalet.alert["acked_by"])
 
     def resolve(self, chalet: Chalet, by: str) -> None:
+        chalet.clip = None  # on ne garde pas d'audio, même sans alerte en cours
         if not chalet.alert:
             return
         chalet.alert = None
         chalet.last_noise = None
-        chalet.clip = None  # on ne garde pas d'audio une fois l'alerte réglée
         self.add_event("resolved", chalet, by=by or "quelqu'un")
 
     def emitter_socket(self, chalet_id: str) -> WebSocket | None:
@@ -210,6 +211,10 @@ class Party:
                 changed = True
             if chalet.listen_at and t - chalet.listen_at > LISTEN_HOLD:
                 chalet.listen_by = chalet.listen_at = None
+                changed = True
+            # un clip demandé à la volée s'efface tout seul : rien ne doit traîner en mémoire
+            if chalet.clip and t - chalet.clip["ts"] > CLIP_TTL:
+                chalet.clip = None
                 changed = True
             a = chalet.alert
             if a and not a["acked_by"] and not a["escalated"] and t - a["started"] > ESCALATION_DELAY:

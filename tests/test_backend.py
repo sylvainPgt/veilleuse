@@ -158,6 +158,22 @@ def test_listen_on_demand():
     assert party.chalets["mesange"].listen_by is None
 
 
+def test_on_demand_clip_never_lingers():
+    """Un clip obtenu par « Écouter » ne doit pas survivre, alerte ou non."""
+    p = Party("test")
+    c = p.register_chalet("m", "M", "")
+
+    c.clip = {"data": "x", "ts": time.time(), "by": "Marie"}
+    p.resolve(c, "Marie")  # « C'est réglé » sans alerte en cours
+    assert c.clip is None
+
+    c.clip = {"data": "x", "ts": time.time(), "by": "Marie"}
+    assert not p.watchdog()          # encore frais
+    c.clip["ts"] -= main.CLIP_TTL + 1
+    assert p.watchdog()              # périmé → effacé et rediffusé
+    assert c.clip is None and c.to_dict()["has_fresh_clip"] is False
+
+
 def test_listen_without_emitter_is_refused():
     with TestClient(app) as client:
         with client.websocket_connect("/ws/vide") as receiver:

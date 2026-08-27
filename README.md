@@ -92,7 +92,7 @@ Un tour de ronde physique toutes les 30 à 45 minutes reste une bonne idée : l'
 
 **Watchdog serveur.** Toutes les 2 secondes : un chalet sans heartbeat depuis 45 s devient « muet » ; une alerte non acquittée depuis 90 s passe en « escalade ». Les deux délais se règlent par variables d'environnement (`VEILLEUSE_HEARTBEAT_TIMEOUT`, `VEILLEUSE_ESCALATION_DELAY`).
 
-**Aucune donnée conservée.** Tout est en mémoire, rien n'est écrit sur disque, les clips ne survivent pas à l'alerte. Un redémarrage du serveur vide l'état ; les émetteurs se ré-enregistrent automatiquement à la reconnexion.
+**Aucune donnée conservée.** Tout est en mémoire, rien n'est écrit sur disque. Un clip s'efface dès que l'alerte est réglée, et de toute façon au bout de deux minutes (`VEILLEUSE_CLIP_TTL`) : aucun son d'un chalet ne traîne sur le serveur. Un redémarrage du serveur vide l'état ; les émetteurs se ré-enregistrent automatiquement à la reconnexion.
 
 ### Protocole WebSocket (`/ws/{code}`)
 
