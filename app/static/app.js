@@ -70,7 +70,7 @@
   // On ne demande que ce que le rôle choisi rend nécessaire : le prénom ne sert
   // qu'aux récepteurs (il s'affiche dans « X y va »), le chalet n'en a pas besoin.
   const ROLE_STEP = {
-    chalet: { label: "Le téléphone du chalet", name: false, cta: "Régler le chalet" },
+    chalet: { label: "Le téléphone du chalet", name: false, cta: "Préparer la veilleuse" },
     salle: { label: "Le téléphone qui vient danser", name: true, cta: "Voir les chalets" },
     sono: { label: "L'écran de la sono", name: false, cta: "Afficher le tableau" },
   };

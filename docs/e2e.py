@@ -26,7 +26,7 @@ async def main():
         await ch.fill("#in-code", "anniv sylvain")   # le prénom ne sert pas au chalet
         await ch.click("#btn-continue")
         await ch.wait_for_selector("#view-chalet-setup:not(.hidden)")
-        await ch.fill("#in-chalet", "Mésange"); await ch.fill("#in-kids", "Léo 4 ans, Jade 2 ans")
+        await ch.fill("#in-chalet", "Mésange"); await ch.fill("#in-kids", "Léo et Jade")
         await ch.click("#btn-mic"); await asyncio.sleep(1)
         await ch.screenshot(path="docs/03-chalet-reglage.png")
         await ch.click("#form-chalet button[type=submit]")
@@ -41,7 +41,7 @@ async def main():
         await ch2.click("#btn-continue")
         await ch2.wait_for_selector("#view-chalet-setup:not(.hidden)")
         await ch2.click("#btn-mic"); await asyncio.sleep(0.6)
-        await ch2.fill("#in-chalet", "Pinson"); await ch2.fill("#in-kids", "Emma 6 ans")
+        await ch2.fill("#in-chalet", "Pinson"); await ch2.fill("#in-kids", "Emma")
         await ch2.click("#form-chalet button[type=submit]")
         await ch2.wait_for_selector("#view-chalet-run:not(.hidden)"); await asyncio.sleep(1)
         # choose own chalet on receiver, then trigger test alert
