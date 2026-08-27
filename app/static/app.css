@@ -56,6 +56,7 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
   font: inherit; font-weight: 600; font-size: var(--t-md); color: var(--text); background: var(--bg-2);
   border: 1px solid var(--line); border-radius: var(--s3); padding: var(--s3) var(--s4); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: var(--s2);
+  text-decoration: none;   /* un <a> déguisé en bouton ne doit pas être souligné */
   transition: transform .06s, background .15s;
 }
 .btn:active { transform: scale(.98); }

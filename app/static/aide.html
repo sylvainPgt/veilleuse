@@ -18,70 +18,139 @@
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/app.css">
 <style>
-  .aide h2 { font-size: 1.25rem; margin: 1.8rem 0 .4rem; }
+  /* Barre toujours présente : la page est longue, on doit pouvoir rejoindre
+     la soirée sans avoir à la parcourir jusqu'en bas. */
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: var(--s3);
+    padding: var(--s2) var(--s4); padding-top: calc(env(safe-area-inset-top) + var(--s2));
+    background: rgba(15,17,23,.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar .name { font-weight: 700; flex: 1; display: flex; align-items: center; gap: var(--s2); }
+  .topbar .name img { width: 24px; height: 24px; }
+
+  .aide { padding-top: var(--s5); }
+  .aide h2 { font-size: var(--t-lg); margin: 0 0 var(--s3); scroll-margin-top: 4.5rem; }
+  .aide section { margin-top: var(--s6); padding-top: var(--s5); border-top: 1px solid var(--line); }
   .aide p, .aide li { color: var(--text); line-height: 1.55; }
-  .aide .lead { color: var(--muted); }
-  .aide ul, .aide ol { padding-left: 1.2rem; margin: .4rem 0; }
-  .aide li { margin-bottom: .4rem; }
-  .legend { list-style: none; padding: 0; }
-  .legend li { display: flex; align-items: baseline; gap: .6rem; }
-  .dot { width: .7rem; height: .7rem; border-radius: 50%; flex: none; transform: translateY(.1rem); }
-  .dot.g { background: var(--green); }
-  .dot.o { background: var(--orange); }
-  .dot.r { background: var(--red); }
-  .dot.a { background: var(--amber); }
+  .aide p { margin: 0 0 var(--s3); }
+  .aide ul, .aide ol { padding-left: var(--s5); margin: var(--s3) 0; display: flex; flex-direction: column; gap: var(--s3); }
+  .aide li { margin: 0; }
+
+  /* Les remarques secondaires : une note, pas du texte grisé qui a l'air désactivé. */
+  .note { border-left: 2px solid var(--amber); padding-left: var(--s3); color: var(--muted); font-size: var(--t-sm); }
+
+  /* Sommaire : cinq sections, on doit pouvoir sauter à la bonne.
+     Sélecteurs qualifiés par ul/ol, sinon la règle générique .aide ul gagne. */
+  .aide ul.toc { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: var(--s2); margin: var(--s4) 0 0; padding-left: 0; list-style: none; }
+  .aide ul.toc a { font-size: var(--t-sm); font-weight: 600; color: var(--text); text-decoration: none;
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: 999px; padding: var(--s2) var(--s3); display: block; }
+
+  .aide ul.roles-list { list-style: none; padding-left: 0; }
+  .aide ul.roles-list li { display: flex; gap: var(--s3); align-items: flex-start; }
+  .aide ul.roles-list .ic { color: var(--amber); margin-top: .2em; }
+
+  .aide ul.legend { list-style: none; padding-left: 0; }
+  .aide ul.legend li { display: flex; align-items: flex-start; gap: var(--s3); }
+  .dot { width: .75rem; height: .75rem; border-radius: 50%; flex: none; margin-top: .42em; }
+  .dot.g { background: var(--green); } .dot.o { background: var(--orange); }
+  .dot.r { background: var(--red); }   .dot.a { background: var(--amber); }
   .dot.m { background: var(--grey); }
-  .aide .card { gap: .4rem; }
-  .aide .card strong.t { font-size: 1.05rem; }
-  .backlink { display: inline-block; margin-top: 2rem; }
+
+  /* Nomme un bouton de l'app exactement comme il apparaît à l'écran. */
+  .ui { display: inline-flex; align-items: center; gap: .3em; white-space: nowrap;
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--s2);
+    padding: .05em .45em; font-weight: 600; font-size: .95em; }
+
+  .aide .card { gap: var(--s3); }
+  .aide .card .t { display: flex; align-items: center; gap: var(--s2); font-size: var(--t-md); font-weight: 700; }
+  .aide .card .t .ic { color: var(--amber); }
+  .aide .card ul { padding-left: var(--s5); }
+
+  .cta { margin-top: var(--s6); display: flex; flex-direction: column; gap: var(--s3); }
+  .cta .btn { width: 100%; padding: var(--s4); font-size: var(--t-md); }
 </style>
 </head>
 <body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-bed" viewBox="0 0 24 24"><path d="M3 17v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4M3 17h18M3 17v3M21 17v3M3 11V6M7 11V9.5A1.5 1.5 0 0 1 8.5 8h3A1.5 1.5 0 0 1 13 9.5V11"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17V5l11-2v12"/><circle cx="6" cy="17" r="3"/><circle cx="17" cy="15" r="3"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V11m0 0V3.5a1.5 1.5 0 0 1 3 0V11m0 0V5.5a1.5 1.5 0 0 1 3 0V13a8 8 0 0 1-16 0v-1a1.5 1.5 0 0 1 3 0"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+  <symbol id="i-replay" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3 8.5"/><path d="M3 3.5v5h5"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3s5 4.5 5 9a5 5 0 0 1-10 0c0-1.6.7-3 1.5-4 .2 1.4 1 2.2 1.8 2.2C12.5 10.2 12 6.5 12 3z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+</defs></svg>
+
+<div class="topbar">
+  <span class="name"><img src="/static/icon.svg" alt=""> Veilleuse</span>
+  <a class="btn primary small" href="/">Rejoindre la soirée</a>
+</div>
+
 <section class="view aide">
   <div class="hero">
-    <img src="/static/icon.svg" alt="" class="logo">
     <h1>Comment ça marche&nbsp;?</h1>
     <p class="tagline">Les enfants dorment dans les chalets, vous dansez dans la salle, tout le monde veille.</p>
+    <ul class="toc">
+      <li><a href="#principe">Le principe</a></li>
+      <li><a href="#coucher">Au coucher</a></li>
+      <li><a href="#salle">À la salle</a></li>
+      <li><a href="#sonne">Quand ça sonne</a></li>
+      <li><a href="#ecouter">Écouter</a></li>
+    </ul>
   </div>
 
-  <h2>Le principe</h2>
-  <p>Chaque couple laisse un téléphone dans le chalet et garde l'autre à la soirée. Pas d'application à installer, pas de compte&nbsp;: on ouvre la page, on entre le code de la soirée et son prénom, et on choisit son rôle.</p>
-  <ul>
-    <li><strong>🛏️ Je reste au chalet</strong> — ce téléphone écoute les enfants et alerte si un bruit dépasse le seuil.</li>
-    <li><strong>🎉 Je vais à la salle</strong> — ce téléphone reçoit les alertes de tous les chalets.</li>
-  </ul>
-  <p class="lead">L'écran de la sono affiche le même tableau en grand&nbsp;: même si un téléphone est au fond d'une poche, personne ne rate une alerte.</p>
+  <section id="principe">
+    <h2>Le principe</h2>
+    <p>Chaque couple laisse un téléphone dans le chalet et garde l'autre à la soirée. Pas d'application à installer, pas de compte&nbsp;: on ouvre la page, on entre le code de la soirée et son prénom, et on choisit son rôle.</p>
+    <ul class="roles-list">
+      <li><svg class="ic"><use href="#i-bed"/></svg><span><strong>Je reste au chalet</strong> — ce téléphone écoute les enfants et alerte si un bruit dépasse le seuil.</span></li>
+      <li><svg class="ic"><use href="#i-music"/></svg><span><strong>Je vais à la salle</strong> — ce téléphone reçoit les alertes de tous les chalets.</span></li>
+    </ul>
+    <p class="note">L'écran de la sono affiche le même tableau en grand&nbsp;: même si un téléphone est au fond d'une poche, personne ne rate une alerte.</p>
+  </section>
 
-  <h2>Au coucher des enfants</h2>
-  <ol>
-    <li>Sur le téléphone qui reste&nbsp;: «&nbsp;Je reste au chalet&nbsp;», nom du chalet, prénoms des enfants.</li>
-    <li>Activez le micro, puis réglez la sensibilité&nbsp;: la barre se colore avec le bruit de la pièce. En parlant normalement la couleur reste à gauche de la poignée orange, un pleur doit la dépasser. Sur iPhone, le micro s'adapte au bruit ambiant&nbsp;: réglez dans les conditions réelles, porte fermée.</li>
-    <li>«&nbsp;Allumer la veilleuse&nbsp;», puis la petite checklist&nbsp;: chargeur branché, mode «&nbsp;Ne pas déranger&nbsp;», écran allumé avec la page au premier plan.</li>
-    <li>👏 Avant de partir, tapez dans les mains&nbsp;: le téléphone de votre conjoint doit sonner. Si c'est bon, allez danser.</li>
-  </ol>
+  <section id="coucher">
+    <h2>Au coucher des enfants</h2>
+    <ol>
+      <li>Sur le téléphone qui reste&nbsp;: «&nbsp;Je reste au chalet&nbsp;», nom du chalet, prénoms des enfants.</li>
+      <li>Activez le micro, puis réglez la sensibilité&nbsp;: la barre se colore avec le bruit de la pièce. En parlant normalement la couleur reste à gauche de la poignée orange, un pleur doit la dépasser. Sur iPhone, le micro s'adapte au bruit ambiant&nbsp;: réglez dans les conditions réelles, porte fermée.</li>
+      <li>«&nbsp;Allumer la veilleuse&nbsp;», puis la petite checklist&nbsp;: chargeur branché, mode «&nbsp;Ne pas déranger&nbsp;», écran allumé avec la page au premier plan.</li>
+      <li>Avant de partir, tapez dans les mains&nbsp;: le téléphone de votre conjoint doit sonner. Si c'est bon, allez danser.</li>
+    </ol>
+  </section>
 
-  <h2>À la salle</h2>
-  <p>Tapez une fois sur <strong>«&nbsp;Activer les alertes&nbsp;»</strong> (sans ça, le navigateur n'a pas le droit de faire sonner ni vibrer le téléphone), puis choisissez votre chalet dans «&nbsp;Mon chalet&nbsp;». Vous voyez alors une tuile par chalet&nbsp;:</p>
-  <ul class="legend">
-    <li><span class="dot g"></span><span><strong>Vert</strong> — tout va bien, le chalet donne des nouvelles.</span></li>
-    <li><span class="dot o"></span><span><strong>Orange</strong> — un bruit court, pas de quoi s'inquiéter.</span></li>
-    <li><span class="dot r"></span><span><strong>Rouge</strong> — ça sonne&nbsp;! Un vrai bruit qui dure.</span></li>
-    <li><span class="dot a"></span><span><strong>Jaune</strong> — quelqu'un a répondu et il est en route.</span></li>
-    <li><span class="dot m"></span><span><strong>Gris «&nbsp;chalet muet&nbsp;»</strong> — plus de nouvelles depuis 45 secondes (téléphone verrouillé, batterie vide, réseau perdu)&nbsp;: quelqu'un va jeter un œil.</span></li>
-  </ul>
+  <section id="salle">
+    <h2>À la salle</h2>
+    <p>Tapez une fois sur <strong>«&nbsp;Activer les alertes&nbsp;»</strong> (sans ça, le navigateur n'a pas le droit de faire sonner ni vibrer le téléphone), puis choisissez votre chalet dans «&nbsp;Mon chalet&nbsp;». Vous voyez alors une tuile par chalet, avec une bande de couleur à gauche&nbsp;:</p>
+    <ul class="legend">
+      <li><span class="dot g"></span><span><strong>Vert</strong> — tout va bien, le chalet donne des nouvelles.</span></li>
+      <li><span class="dot o"></span><span><strong>Orange</strong> — un bruit court, pas de quoi s'inquiéter.</span></li>
+      <li><span class="dot r"></span><span><strong>Rouge</strong> — ça sonne&nbsp;! Un vrai bruit qui dure.</span></li>
+      <li><span class="dot a"></span><span><strong>Jaune</strong> — quelqu'un a répondu et il est en route.</span></li>
+      <li><span class="dot m"></span><span><strong>Gris «&nbsp;chalet muet&nbsp;»</strong> — plus de nouvelles depuis 45 secondes (téléphone verrouillé, batterie vide, réseau perdu)&nbsp;: quelqu'un va jeter un œil.</span></li>
+    </ul>
+  </section>
 
-  <h2>Quand ça sonne</h2>
-  <p>Le couple concerné reçoit une alerte forte, les autres une alerte douce. N'importe qui peut taper <strong>«&nbsp;J'y vais&nbsp;»</strong>&nbsp;: tous les téléphones l'affichent, inutile d'y aller à dix. Sur place, on écoute, on console, et on tape <strong>«&nbsp;C'est réglé&nbsp;»</strong>.</p>
-  <p>Si personne ne répond en 90 secondes, l'alerte passe en rouge clignotant sur tous les écrans, y compris celui de la sono — le DJ peut baisser la musique et l'annoncer au micro.</p>
-  <p class="lead">Le bouton <strong>▶︎ L'alerte</strong> fait entendre les 4 secondes enregistrées au moment où ça a sonné.</p>
+  <section id="sonne">
+    <h2>Quand ça sonne</h2>
+    <p>Le couple concerné reçoit une alerte forte, les autres une alerte douce. N'importe qui peut taper <strong>«&nbsp;J'y vais&nbsp;»</strong>&nbsp;: tous les téléphones l'affichent, inutile d'y aller à dix. Sur place, on écoute, on console, et on tape <strong>«&nbsp;C'est réglé&nbsp;»</strong>.</p>
+    <p>Si personne ne répond en 90 secondes, l'alerte passe en rouge clignotant sur tous les écrans, y compris celui de la sono — le DJ peut baisser la musique et l'annoncer au micro.</p>
+    <p class="note">Le bouton <span class="ui"><svg class="ic solid"><use href="#i-play"/></svg> L'alerte</span> fait entendre les 4 secondes enregistrées au moment où ça a sonné.</p>
+  </section>
 
-  <h2>Écouter ce qui se passe maintenant</h2>
-  <p>Sur n'importe quelle tuile, le bouton <strong>🔊 Écouter</strong> demande au téléphone du chalet d'enregistrer 10 secondes et de vous les envoyer. Comptez une quinzaine de secondes entre l'appui et le son. Vous pouvez réappuyer autant de fois que nécessaire, et le bouton ↻ rejoue le dernier enregistrement.</p>
-  <p>Ce n'est pas une écoute permanente, et c'est volontaire&nbsp;: un flux continu serait la première chose à casser sur un réseau faible, justement au mauvais moment.</p>
-  <p class="lead">Par respect pour les autres familles, l'écran du chalet affiche le prénom de la personne qui écoute, et le journal de la soirée le note.</p>
+  <section id="ecouter">
+    <h2>Écouter ce qui se passe maintenant</h2>
+    <p>Sur n'importe quelle tuile, le bouton <span class="ui"><svg class="ic"><use href="#i-speaker"/></svg> Écouter</span> demande au téléphone du chalet d'enregistrer 10 secondes et de vous les envoyer. Comptez une quinzaine de secondes entre l'appui et le son. Vous pouvez réappuyer autant de fois que nécessaire, et le bouton <span class="ui"><svg class="ic"><use href="#i-replay"/></svg></span> rejoue le dernier enregistrement.</p>
+    <p>Ce n'est pas une écoute permanente, et c'est volontaire&nbsp;: un flux continu serait la première chose à casser sur un réseau faible, justement au mauvais moment.</p>
+    <p class="note">Par respect pour les autres familles, l'écran du chalet affiche le prénom de la personne qui écoute, et le journal de la soirée le note.</p>
+  </section>
 
   <div class="card">
-    <strong class="t">🕯️ Bon à savoir</strong>
+    <span class="t"><svg class="ic solid"><use href="#i-flame"/></svg> Bon à savoir</span>
     <ul>
       <li><strong>Le silence est une alerte.</strong> Un chalet qui se tait passe en «&nbsp;muet&nbsp;» sur tous les écrans&nbsp;: on préfère un déplacement pour rien à un faux silence.</li>
       <li><strong>Rien n'est conservé.</strong> Pas de compte, pas d'enregistrement&nbsp;: tout s'efface à la fin de la soirée.</li>
@@ -89,8 +158,10 @@
     </ul>
   </div>
 
-  <a class="btn primary backlink" href="/">‹ Rejoindre la soirée</a>
-  <p class="fine">Veilleuse — le babyphone collectif des soirées en gîte.</p>
+  <div class="cta">
+    <a class="btn primary" href="/"><svg class="ic"><use href="#i-back"/></svg> Rejoindre la soirée</a>
+    <p class="fine">Veilleuse — le babyphone collectif des soirées en gîte.</p>
+  </div>
 </section>
 </body>
 </html>
