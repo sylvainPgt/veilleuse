@@ -52,26 +52,35 @@
     <h1>Veilleuse</h1>
     <p class="tagline">Le babyphone collectif des soirées en gîte.<br>Les enfants dorment dans les chalets, vous dansez dans la salle, tout le monde veille.</p>
   </div>
+  <!-- Le rôle d'abord : il décide des questions suivantes. -->
   <form id="form-home" class="card">
-    <label>Code de la soirée
-      <input id="in-code" type="text" autocomplete="off" autocapitalize="none" placeholder="ex. anniv-sylvain" required>
-    </label>
-    <label>Votre prénom
-      <input id="in-name" type="text" autocomplete="given-name" placeholder="ex. Marie" required>
-    </label>
-    <div class="roles">
-      <button type="submit" data-role="chalet" class="btn role">
-        <svg class="ic lg"><use href="#i-bed"/></svg>
-        <strong>Je reste au chalet</strong>
-        <small>Ce téléphone écoute les enfants</small>
-      </button>
-      <button type="submit" data-role="salle" class="btn role">
-        <svg class="ic lg"><use href="#i-music"/></svg>
-        <strong>Je vais à la salle</strong>
-        <small>Ce téléphone reçoit les alertes</small>
-      </button>
+    <div class="step">
+      <span class="step-label">Ce téléphone va…</span>
+      <div class="roles">
+        <button type="button" data-role="chalet" class="btn role">
+          <svg class="ic lg"><use href="#i-bed"/></svg>
+          <strong>Rester au chalet</strong>
+          <small>Il écoute les enfants</small>
+        </button>
+        <button type="button" data-role="salle" class="btn role">
+          <svg class="ic lg"><use href="#i-music"/></svg>
+          <strong>Aller à la salle</strong>
+          <small>Il reçoit les alertes</small>
+        </button>
+      </div>
+      <button type="button" data-role="sono" class="btn ghost small"><svg class="ic"><use href="#i-screen"/></svg> Écran de la sono</button>
     </div>
-    <button type="submit" data-role="sono" class="btn ghost small"><svg class="ic"><use href="#i-screen"/></svg> Écran de la sono</button>
+
+    <div id="home-step2" class="step hidden">
+      <span class="step-label" id="home-role-label"></span>
+      <label>Code de la soirée
+        <input id="in-code" type="text" autocomplete="off" autocapitalize="none" placeholder="ex. anniv-sylvain" required>
+      </label>
+      <label id="lab-name">Votre prénom
+        <input id="in-name" type="text" autocomplete="given-name" placeholder="ex. Marie">
+      </label>
+      <button type="submit" id="btn-continue" class="btn primary">Continuer</button>
+    </div>
   </form>
   <p class="fine">Aucun compte, aucune donnée conservée : un code par soirée, c'est tout.</p>
   <a href="/aide" class="btn ghost small aide-link">Comment ça marche ? <svg class="ic"><use href="#i-chevron"/></svg></a>
@@ -84,8 +93,9 @@
     <label>Nom du chalet
       <input id="in-chalet" type="text" placeholder="ex. Mésange" required>
     </label>
-    <label>Enfants (prénoms, âges)
+    <label>Prénoms des enfants
       <input id="in-kids" type="text" placeholder="ex. Léo 4 ans, Jade 2 ans">
+      <small class="hint">Ils s'affichent en grand quand ce chalet sonne — c'est ce qui permet de reconnaître le sien d'un coup d'œil.</small>
     </label>
     <!-- Le micro d'abord : sans lui, régler la sensibilité se ferait à l'aveugle. -->
     <button type="button" id="btn-mic" class="btn primary"><svg class="ic"><use href="#i-mic"/></svg> Activer le micro pour régler</button>

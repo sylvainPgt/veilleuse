@@ -11,8 +11,10 @@ async def main():
         salle = await ctx.new_page(); salle.on("pageerror", lambda e: errors.append(("salle", str(e))))
         await salle.goto("http://localhost:8000/")
         await salle.screenshot(path="docs/01-accueil.png")
-        await salle.fill("#in-code", "anniv sylvain"); await salle.fill("#in-name", "Marie")
+        # Le rôle d'abord : les champs ne se déplient qu'ensuite.
         await salle.click("button[data-role=salle]")
+        await salle.fill("#in-code", "anniv sylvain"); await salle.fill("#in-name", "Marie")
+        await salle.click("#btn-continue")
         await salle.wait_for_selector("#view-salle:not(.hidden)")
         await salle.click("#btn-arm")
         await asyncio.sleep(0.5)
@@ -20,8 +22,9 @@ async def main():
         # --- émetteur
         ch = await ctx.new_page(); ch.on("pageerror", lambda e: errors.append(("chalet", str(e))))
         await ch.goto("http://localhost:8000/")
-        await ch.fill("#in-code", "anniv sylvain"); await ch.fill("#in-name", "Sylvain")
         await ch.click("button[data-role=chalet]")
+        await ch.fill("#in-code", "anniv sylvain")   # le prénom ne sert pas au chalet
+        await ch.click("#btn-continue")
         await ch.wait_for_selector("#view-chalet-setup:not(.hidden)")
         await ch.fill("#in-chalet", "Mésange"); await ch.fill("#in-kids", "Léo 4 ans, Jade 2 ans")
         await ch.click("#btn-mic"); await asyncio.sleep(1)
@@ -33,8 +36,11 @@ async def main():
         # second chalet via API-less path: another emitter page
         ch2 = await ctx.new_page(); ch2.on("pageerror", lambda e: errors.append(("chalet2", str(e))))
         await ch2.goto("http://localhost:8000/")
-        await ch2.fill("#in-code", "anniv sylvain"); await ch2.fill("#in-name", "Paul")
         await ch2.click("button[data-role=chalet]")
+        await ch2.fill("#in-code", "anniv sylvain")
+        await ch2.click("#btn-continue")
+        await ch2.wait_for_selector("#view-chalet-setup:not(.hidden)")
+        await ch2.click("#btn-mic"); await asyncio.sleep(0.6)
         await ch2.fill("#in-chalet", "Pinson"); await ch2.fill("#in-kids", "Emma 6 ans")
         await ch2.click("#form-chalet button[type=submit]")
         await ch2.wait_for_selector("#view-chalet-run:not(.hidden)"); await asyncio.sleep(1)

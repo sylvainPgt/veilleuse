@@ -65,10 +65,31 @@
   // ---------- accueil ----------
   $("in-code").value = store.get("code", "");
   $("in-name").value = store.get("name", "");
-  let chosenRole = "salle";
-  document.querySelectorAll("#form-home [data-role]").forEach((b) => b.addEventListener("click", () => { chosenRole = b.dataset.role; }));
+  let chosenRole = "";
+
+  // On ne demande que ce que le rôle choisi rend nécessaire : le prénom ne sert
+  // qu'aux récepteurs (il s'affiche dans « X y va »), le chalet n'en a pas besoin.
+  const ROLE_STEP = {
+    chalet: { label: "Le téléphone du chalet", name: false, cta: "Régler le chalet" },
+    salle: { label: "Le téléphone qui vient danser", name: true, cta: "Voir les chalets" },
+    sono: { label: "L'écran de la sono", name: false, cta: "Afficher le tableau" },
+  };
+  document.querySelectorAll("#form-home [data-role]").forEach((b) => b.addEventListener("click", () => {
+    chosenRole = b.dataset.role;
+    const step = ROLE_STEP[chosenRole];
+    document.querySelectorAll("#form-home [data-role]").forEach((o) => o.classList.toggle("selected", o === b));
+    $("home-role-label").textContent = step.label;
+    $("lab-name").classList.toggle("hidden", !step.name);
+    $("in-name").required = step.name;              // sinon un champ caché bloque l'envoi
+    $("btn-continue").textContent = step.cta;
+    $("home-step2").classList.remove("hidden");
+    if (!$("in-code").value) $("in-code").focus();
+    else if (step.name && !$("in-name").value) $("in-name").focus();
+  }));
+
   $("form-home").addEventListener("submit", (e) => {
     e.preventDefault();
+    if (!chosenRole) return toast("Choisissez d'abord ce que fait ce téléphone");
     session.code = slug($("in-code").value); session.name = $("in-name").value.trim();
     if (!session.code) return toast("Il faut un code de soirée");
     store.set("code", $("in-code").value.trim()); store.set("name", session.name);
