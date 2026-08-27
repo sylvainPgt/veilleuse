@@ -25,6 +25,26 @@
 </head>
 <body>
 
+<!-- Icônes : monochromes et identiques sur tous les téléphones, contrairement aux emoji. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-bed" viewBox="0 0 24 24"><path d="M3 17v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4M3 17h18M3 17v3M21 17v3M3 11V6M7 11V9.5A1.5 1.5 0 0 1 8.5 8h3A1.5 1.5 0 0 1 13 9.5V11"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17V5l11-2v12"/><circle cx="6" cy="17" r="3"/><circle cx="17" cy="15" r="3"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 19a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0z M12 17v5"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V11m0 0V3.5a1.5 1.5 0 0 1 3 0V11m0 0V5.5a1.5 1.5 0 0 1 3 0V13a8 8 0 0 1-16 0v-1a1.5 1.5 0 0 1 3 0"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+  <symbol id="i-replay" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3 8.5"/><path d="M3 3.5v5h5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2" y="7" width="17" height="10" rx="2.5"/><path d="M22 10.5v3"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20.5h19z"/><path d="M12 10v4.5M12 17.6v.01"/></symbol>
+</defs></svg>
+
 <!-- ============ Accueil ============ -->
 <section id="view-home" class="view">
   <div class="hero">
@@ -41,17 +61,17 @@
     </label>
     <div class="roles">
       <button type="submit" data-role="chalet" class="btn role">
-        <span class="role-icon">🛏️</span>
+        <svg class="ic lg"><use href="#i-bed"/></svg>
         <strong>Je reste au chalet</strong>
         <small>Ce téléphone écoute les enfants</small>
       </button>
       <button type="submit" data-role="salle" class="btn role">
-        <span class="role-icon">🎉</span>
+        <svg class="ic lg"><use href="#i-music"/></svg>
         <strong>Je vais à la salle</strong>
         <small>Ce téléphone reçoit les alertes</small>
       </button>
     </div>
-    <button type="submit" data-role="sono" class="btn ghost small">🖥️ Écran de la sono (affichage plein écran)</button>
+    <button type="submit" data-role="sono" class="btn ghost small"><svg class="ic"><use href="#i-screen"/></svg> Écran de la sono</button>
   </form>
   <p class="fine">Aucun compte, aucune donnée conservée : un code par soirée, c'est tout.<br><a href="/aide" class="aide-link">Comment ça marche ?</a></p>
 </section>
@@ -66,14 +86,18 @@
     <label>Enfants (prénoms, âges)
       <input id="in-kids" type="text" placeholder="ex. Léo 4 ans, Jade 2 ans">
     </label>
-    <label>Sensibilité
-      <div class="meter-wrap">
-        <div class="meter"><div id="setup-level" class="meter-fill"></div><div id="setup-thr" class="meter-thr"></div></div>
-      </div>
-      <input id="in-threshold" type="range" min="10" max="95" value="55">
-      <small class="hint">La barre bouge avec le bruit de la pièce, le trait orange est le seuil. Parlez normalement : la barre doit rester en dessous. Un pleur doit passer au-dessus. Sur iPhone, le micro s'adapte au bruit ambiant : réglez dans les conditions réelles, porte fermée. <span id="setup-mic-state">Micro non activé.</span></small>
-    </label>
-    <button type="button" id="btn-mic" class="btn secondary">🎙️ Activer le micro pour régler</button>
+    <!-- Le micro d'abord : sans lui, régler la sensibilité se ferait à l'aveugle. -->
+    <button type="button" id="btn-mic" class="btn primary"><svg class="ic"><use href="#i-mic"/></svg> Activer le micro pour régler</button>
+    <div id="setup-thr-block" class="hidden">
+      <label>Sensibilité
+        <div class="thr-field">
+          <div class="meter"><div id="setup-level" class="meter-rest"></div></div>
+          <input id="in-threshold" type="range" min="10" max="95" value="55" aria-label="Seuil de déclenchement">
+        </div>
+        <div class="thr-legend"><span>bruit de la pièce</span><span><b>▮</b> seuil</span></div>
+        <small class="hint">Parlez normalement : la couleur doit rester à gauche de la poignée. Un pleur doit la dépasser.</small>
+      </label>
+    </div>
     <button type="submit" class="btn primary">Allumer la veilleuse</button>
   </form>
 </section>
@@ -89,22 +113,22 @@
     <div id="run-status" class="run-status">Veilleuse allumée</div>
     <div id="run-chalet" class="run-chalet"></div>
     <div id="run-kids" class="run-kids"></div>
-    <div class="meter big"><div id="run-level" class="meter-fill"></div><div id="run-thr" class="meter-thr"></div></div>
+    <div class="meter big"><div id="run-level" class="meter-rest"></div><div id="run-thr" class="meter-thr"></div></div>
     <div id="run-msg" class="run-msg">Les parents sont prévenus dès qu'un bruit dépasse le seuil.</div>
-    <button id="btn-remic" class="btn primary hidden">🎙️ Réactiver le micro</button>
+    <button id="btn-remic" class="btn primary hidden"><svg class="ic"><use href="#i-mic"/></svg> Réactiver le micro</button>
     <div id="run-listen" class="run-listen hidden"></div>
   </div>
   <div class="checklist card">
     <strong>Avant de partir danser</strong>
     <ul>
-      <li>🔌 Téléphone branché au chargeur</li>
-      <li>📵 Mode « Ne pas déranger » activé</li>
-      <li>🔆 Écran allumé, cette page au premier plan (ne pas verrouiller) — si ⚠️ en haut, désactivez le verrouillage automatique dans les réglages</li>
-      <li>👏 Tapez dans les mains : votre conjoint doit voir le chalet sonner</li>
+      <li><svg class="ic"><use href="#i-plug"/></svg> Téléphone branché au chargeur</li>
+      <li><svg class="ic"><use href="#i-moon"/></svg> Mode « Ne pas déranger » activé</li>
+      <li><svg class="ic"><use href="#i-sun"/></svg> Écran allumé, cette page au premier plan</li>
+      <li><svg class="ic"><use href="#i-hand"/></svg> Tapez dans les mains : votre conjoint doit voir le chalet sonner</li>
     </ul>
   </div>
   <div class="run-actions">
-    <button id="btn-test" class="btn secondary">👏 Tester l'alerte</button>
+    <button id="btn-test" class="btn secondary"><svg class="ic"><use href="#i-hand"/></svg> Tester l'alerte</button>
     <button id="btn-stop" class="btn ghost">Éteindre la veilleuse</button>
   </div>
 </section>
@@ -118,17 +142,16 @@
   </header>
   <div id="salle-armed" class="card arm-card">
     <p>Pour vibrer et sonner malgré la musique, ce téléphone doit être « réveillé » une fois.</p>
-    <button id="btn-arm" class="btn primary">🔔 Activer les alertes sur ce téléphone</button>
+    <button id="btn-arm" class="btn primary"><svg class="ic"><use href="#i-bell"/></svg> Activer les alertes sur ce téléphone</button>
   </div>
-  <div class="salle-own">
-    <label>Mon chalet
-      <select id="sel-own"><option value="">— aucun / je veille sur tous —</option></select>
-    </label>
+  <div class="own-picker">
+    <label for="sel-own">Mon chalet</label>
+    <select id="sel-own"><option value="">— aucun / je veille sur tous —</option></select>
   </div>
   <div id="tiles" class="tiles"></div>
   <div id="empty" class="empty hidden">Aucun chalet n'a encore rejoint la soirée <strong id="empty-code"></strong>.<br>Sur le téléphone laissé au chalet, choisissez « Je reste au chalet » avec le même code.</div>
-  <details class="events"><summary>Journal</summary><ul id="events"></ul></details>
-  <button id="btn-fullscreen" class="btn ghost small fs">⛶ Plein écran</button>
+  <details class="events"><summary><svg class="ic"><use href="#i-chevron"/></svg> Journal de la soirée</summary><ul id="events"></ul></details>
+  <button id="btn-fullscreen" class="btn ghost small fs"><svg class="ic"><use href="#i-expand"/></svg> Plein écran</button>
 </section>
 
 <!-- Overlay d'alerte (salle + sono) -->
@@ -137,8 +160,10 @@
     <div class="overlay-kicker" id="ov-kicker">Ça sonne</div>
     <div class="overlay-name" id="ov-name"></div>
     <div class="overlay-kids" id="ov-kids"></div>
+    <div class="overlay-since" id="ov-since"></div>
     <div class="overlay-actions">
       <button id="ov-ack" class="btn primary huge">J'y vais</button>
+      <button id="ov-listen" class="btn secondary"><svg class="ic"><use href="#i-speaker"/></svg> Écouter</button>
       <button id="ov-dismiss" class="btn ghost">Masquer</button>
     </div>
   </div>

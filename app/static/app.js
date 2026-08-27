@@ -147,15 +147,24 @@
 
   const chalet = { id: "", name: "", kids: "", threshold: 55, above: 0, lastNoise: 0, lastAlert: 0, alerting: false, hbTimer: null };
 
+  // La barre montre un niveau absolu : on masque la part non atteinte, le dégradé reste fixe.
+  const setLevel = (el, level) => { el.style.width = (100 - Math.max(0, Math.min(100, level))) + "%"; };
+
   function startChaletSetup() {
     const saved = store.get("chalet", {});
     $("in-chalet").value = saved.name || ""; $("in-kids").value = saved.kids || ""; $("in-threshold").value = saved.threshold || 55;
-    $("setup-thr").style.left = $("in-threshold").value + "%";
-    detector.onLevel = (l) => { $("setup-level").style.width = l + "%"; };
+    chalet.threshold = +$("in-threshold").value;
+    $("setup-thr-block").classList.toggle("hidden", !detector.micAlive());
+    $("btn-mic").classList.toggle("hidden", detector.micAlive());
+    detector.onLevel = (l) => setLevel($("setup-level"), l);
     show("chalet-setup");
   }
-  $("in-threshold").addEventListener("input", (e) => { $("setup-thr").style.left = e.target.value + "%"; $("run-thr").style.left = e.target.value + "%"; chalet.threshold = +e.target.value; });
-  $("btn-mic").addEventListener("click", async () => { if (await detector.start()) { $("setup-mic-state").textContent = "Micro actif."; $("btn-mic").classList.add("hidden"); } });
+  $("in-threshold").addEventListener("input", (e) => { $("run-thr").style.left = e.target.value + "%"; chalet.threshold = +e.target.value; });
+  $("btn-mic").addEventListener("click", async () => {
+    if (!(await detector.start())) return;
+    $("btn-mic").classList.add("hidden");
+    $("setup-thr-block").classList.remove("hidden");   // on ne règle qu'une fois le micro vivant
+  });
 
   $("form-chalet").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -172,8 +181,8 @@
     show("chalet-run");
     keepAwake().then((ok) => {
       const p = $("run-wake");
-      p.textContent = ok ? "☀️ écran maintenu" : "⚠️ écran non maintenu";
-      p.className = "pill " + (ok ? "ok" : "bad");
+      p.innerHTML = `<svg class="ic"><use href="#${ok ? "i-sun" : "i-warn"}"/></svg> ${ok ? "écran maintenu" : "écran non maintenu"}`;
+      p.className = "pill " + (ok ? "ok" : "warn");
       if (!ok) toast("Ce téléphone ne sait pas garder l'écran allumé : désactivez le verrouillage automatique dans les réglages.", 6000);
     });
 
@@ -227,14 +236,14 @@
     if (!detector.micAlive()) return; // micro mort : on se tait, le serveur passera le chalet en « muet »
     let battery = null;
     try { const b = await navigator.getBattery?.(); if (b) battery = Math.round(b.level * 100); } catch { /* iOS */ }
-    $("run-batt").textContent = battery != null ? `🔋 ${battery} %` : "";
+    $("run-batt").innerHTML = battery != null ? `<svg class="ic"><use href="#i-battery"/></svg><span class="num">${battery} %</span>` : "";
     net.send({ type: "hb", chalet_id: chalet.id, level: Math.round(detector.level), battery, threshold: chalet.threshold }, { queueIfOffline: false });
   }
 
   // Décision d'alerte : niveau au-dessus du seuil pendant ~1,5 s cumulées sur une fenêtre courte
   let lastFrame = performance.now();
   function onChaletLevel(level) {
-    $("run-level").style.width = level + "%";
+    setLevel($("run-level"), level);
     const t = performance.now(), dt = t - lastFrame; lastFrame = t;
     if (level >= chalet.threshold) chalet.above = Math.min(chalet.above + dt, 4000);
     else chalet.above = Math.max(chalet.above - dt * 0.5, 0);      // un bref creux ne remet pas à zéro
@@ -256,7 +265,7 @@
   async function serveClipRequest(m) {
     if (!detector.micAlive()) return;
     const who = m.by || "Quelqu'un";
-    $("run-listen").textContent = `🔊 ${who} écoute…`;
+    $("run-listen").innerHTML = `<svg class="ic"><use href="#i-speaker"/></svg> ${esc(who)} écoute…`;
     $("run-listen").classList.remove("hidden");
     const clip = await detector.recordClip(Math.min(Math.max((m.seconds || 10) * 1000, 2000), 15000));
     if (clip) net.send({ type: "clip", chalet_id: chalet.id, clip }, { queueIfOffline: false });
@@ -300,7 +309,7 @@
   function onSalleMessage(m) {
     if (m.type === "level") {
       const c = salle.state?.chalets.find((x) => x.id === m.chalet_id); if (c) { c.level = m.level; c.battery = m.battery; c.last_hb = m.ts; }
-      const bar = document.querySelector(`.tile[data-id="${m.chalet_id}"] .meter-fill`); if (bar) bar.style.width = m.level + "%";
+      const bar = document.querySelector(`.tile[data-id="${m.chalet_id}"] .meter-rest`); if (bar) setLevel(bar, m.level);
       return;
     }
     if (m.type === "clip_ready") {
@@ -362,9 +371,25 @@
   function showOverlay(c, kicker) {
     $("ov-kicker").textContent = kicker; $("ov-name").textContent = c.name; $("ov-name").dataset.id = c.id; $("ov-kids").textContent = c.kids || "";
     $("overlay").classList.remove("hidden"); $("overlay").classList.toggle("acked", c.status === "acked");
+    $("ov-listen").classList.toggle("hidden", c.status === "offline");
+    renderOverlaySince();
+  }
+
+  // Depuis combien de temps ça sonne : c'est cette durée qui décide d'y aller.
+  function renderOverlaySince() {
+    const id = $("ov-name").dataset.id;
+    const c = salle.state?.chalets.find((x) => x.id === id);
+    const el = $("ov-since");
+    if (!c?.alert) { el.textContent = ""; return; }
+    const now = Date.now() / 1000 + salle.serverOffset;
+    el.textContent = c.alert.acked_by
+      ? `${c.alert.acked_by} y va depuis ${fmtAgo(now - c.alert.acked_at)}`
+      : `sonne depuis ${fmtAgo(now - c.alert.started)}`;
   }
   $("ov-ack").addEventListener("click", () => { ack($("ov-name").dataset.id); $("overlay").classList.add("hidden"); });
   $("ov-dismiss").addEventListener("click", () => $("overlay").classList.add("hidden"));
+  // « Il pleure vraiment ? » se pose pendant l'alerte, pas après l'avoir masquée.
+  $("ov-listen").addEventListener("click", () => requestListen($("ov-name").dataset.id));
   const ack = (id) => net.send({ type: "ack", chalet_id: id, by: session.name });
   const resolve = (id) => net.send({ type: "resolve", chalet_id: id, by: session.name });
 
@@ -389,25 +414,37 @@
       } else if (c.status === "offline") line = c.last_hb ? `plus de nouvelles depuis ${fmtAgo(now - c.last_hb)}` : "jamais connecté";
       // Écouter = demander du frais. Réécouter = rejouer le dernier reçu (aussi le
       // repli quand iOS refuse la lecture automatique faute de geste utilisateur.)
-      const listen = (c.status !== "offline"
-        ? `<button class="btn ghost" data-listen="${esc(c.id)}">${salle.awaitingClip === c.id ? "🔊 …" : "🔊 Écouter"}</button>` : "")
-        + (c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}">↻</button>` : "");
-      const actions = a
-        ? `<div class="actions">${a.acked_by ? "" : `<button class="btn primary" data-ack="${esc(c.id)}">J'y vais</button>`}<button class="btn secondary" data-resolve="${esc(c.id)}">C'est réglé</button>${a.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}">▶︎ L'alerte</button>` : ""}${listen}</div>`
-        : (listen ? `<div class="actions">${listen}</div>` : "");
+      // Une seule action principale ; le reste en rang serré dessous.
+      const ic = (n) => `<svg class="ic"><use href="#${n}"/></svg>`;
+      const secondary = [
+        c.status !== "offline"
+          ? `<button class="btn ghost" data-listen="${esc(c.id)}">${ic("i-speaker")} ${salle.awaitingClip === c.id ? "…" : "Écouter"}</button>` : "",
+        c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}" aria-label="Réécouter">${ic("i-replay")}</button>` : "",
+        a?.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}" aria-label="Écouter l'alerte">${ic("i-play")}</button>` : "",
+        a ? `<button class="btn ghost" data-resolve="${esc(c.id)}">C'est réglé</button>` : "",
+      ].filter(Boolean).join("");
+      const primary = a && !a.acked_by ? `<button class="btn primary" data-ack="${esc(c.id)}">J'y vais</button>` : "";
+      const actions = (primary || secondary)
+        ? `<div class="actions">${primary}${secondary ? `<div class="row">${secondary}</div>` : ""}</div>` : "";
+      const meta = [line ? `<span>${esc(line)}</span>` : "",
+                    c.battery != null ? `<span class="num">${ic("i-battery")} ${c.battery} %</span>` : ""].filter(Boolean).join("");
       return `<div class="tile${c.id === salle.ownId ? " own" : ""}" data-id="${esc(c.id)}" data-status="${c.status}">
-        <div class="name">${esc(c.name)}</div>
+        <div class="name">${esc(c.name)}${c.id === salle.ownId ? '<span class="tag">mon chalet</span>' : ""}</div>
         <div class="kids">${esc(c.kids)}</div>
-        <div class="meter"><div class="meter-fill" style="width:${c.level}%"></div><div class="meter-thr" style="left:${c.threshold ?? 55}%"></div></div>
-        <div class="status">${STATUS_LABEL[c.status] || c.status}${c.listen_by ? ` <span class="listening">🔊 ${esc(c.listen_by)} écoute</span>` : ""}</div>
-        <div class="meta"><span>${esc(line)}</span><span>${c.battery != null ? "🔋 " + c.battery + " %" : ""}</span></div>
+        <div class="meter"><div class="meter-rest" style="width:${100 - c.level}%"></div><div class="meter-thr" style="left:${c.threshold ?? 55}%"></div></div>
+        <div class="status">${STATUS_LABEL[c.status] || c.status}${c.listen_by ? `<span class="listening">${ic("i-speaker")} ${esc(c.listen_by)} écoute</span>` : ""}</div>
+        <div class="meta">${meta}</div>
         ${actions}</div>`;
     }).join("");
     const box = $("tiles");
     if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
     // l'overlay suit l'état
     const ovId = $("ov-name").dataset.id; const ovC = chalets.find((c) => c.id === ovId);
-    if (ovC && !$("overlay").classList.contains("hidden")) { $("overlay").classList.toggle("acked", ovC.status === "acked"); if (ovC.status === "acked") $("ov-kicker").textContent = `${ovC.alert.acked_by} y va`; }
+    if (ovC && !$("overlay").classList.contains("hidden")) {
+      $("overlay").classList.toggle("acked", ovC.status === "acked");
+      if (ovC.status === "acked") $("ov-kicker").textContent = `${ovC.alert.acked_by} y va`;
+      renderOverlaySince();
+    }
   }
   const rank = (c) => ({ escalated: 5, alert: 4, acked: 3, offline: 2, noise: 1, ok: 0 }[c.status] ?? 0);
   $("tiles").addEventListener("click", (e) => {
@@ -445,7 +482,7 @@
 
   const EVENT_LABEL = { registered: "a rejoint la soirée", online: "est connecté", offline: "ne donne plus de nouvelles", alert: "sonne", escalated: "sonne sans réponse — escalade", ack: "→ {by} y va", resolved: "réglé par {by}", listen: "→ {by} a écouté" };
   function renderEvents() {
-    const html = [...salle.state.events].reverse().map((e) => `<li><time>${fmtTime(e.ts)}</time><strong>${esc(e.chalet_name || "")}</strong> ${esc((EVENT_LABEL[e.kind] || e.kind).replace("{by}", e.by || ""))}${e.reason === "test" ? " (test)" : ""}</li>`).join("");
+    const html = [...salle.state.events].reverse().map((e) => `<li data-kind="${esc(e.kind)}"><time>${fmtTime(e.ts)}</time><span><strong>${esc(e.chalet_name || "")}</strong> ${esc((EVENT_LABEL[e.kind] || e.kind).replace("{by}", e.by || ""))}${e.reason === "test" ? " (test)" : ""}</span></li>`).join("");
     $("events").innerHTML = html;
   }
 
