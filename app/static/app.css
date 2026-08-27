@@ -27,6 +27,7 @@ small, .hint { color: var(--muted); font-size: .85rem; }
 .logo { width: 84px; height: 84px; filter: drop-shadow(0 8px 24px rgba(245,179,66,.35)); }
 .tagline { color: var(--muted); margin: .4rem auto 0; max-width: 420px; }
 .fine { text-align: center; color: var(--grey); font-size: .8rem; }
+.aide-link { color: var(--amber); }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem; display: flex; flex-direction: column; gap: .9rem; margin-top: 1rem; }
 label { display: flex; flex-direction: column; gap: .35rem; font-weight: 600; font-size: .9rem; }

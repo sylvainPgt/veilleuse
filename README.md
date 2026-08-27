@@ -117,7 +117,7 @@ Prévoyez de tester **sur place, dans un chalet, avec l'opérateur de chaque cou
 
 ## Limites connues
 
-- **L'app doit rester au premier plan sur le téléphone du chalet**, écran allumé. iOS et Android coupent le micro d'un onglet en arrière-plan. Le wake lock empêche la mise en veille, mais si quelqu'un verrouille l'écran, le chalet passera « muet » au bout de 45 secondes — c'est voulu, on préfère une fausse alerte à un faux silence.
+- **L'app doit rester au premier plan sur le téléphone du chalet**, écran allumé. iOS et Android coupent le micro d'un onglet en arrière-plan. Le wake lock empêche la mise en veille (une pastille ⚠️ s'affiche s'il n'est pas disponible, notamment avant iOS 16.4 — désactivez alors le verrouillage automatique), mais si quelqu'un verrouille l'écran, le chalet passera « muet » au bout de 45 secondes — c'est voulu, on préfère une fausse alerte à un faux silence.
 - **Un appel entrant** sur le téléphone du chalet interrompt le micro (surtout sur iPhone). D'où le mode « Ne pas déranger ».
 - **Les notifications d'une webapp fermée** sont peu fiables sur iPhone. Les récepteurs gardent la page ouverte dans la poche ; l'écran de la sono est là pour ça.
 - **Pas d'écoute en direct** (volontairement) : en réseau faible, un flux continu est la première chose qui casse. Le clip de 4 secondes répond à la question « il pleure vraiment ? ».

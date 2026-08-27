@@ -8,6 +8,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Veilleuse — babyphone collectif</title>
+<meta name="description" content="Les enfants dorment dans les chalets, vous dansez dans la salle. Chaque couple laisse un téléphone qui écoute : dès qu'un enfant pleure, tout le monde est prévenu.">
+<!-- Aperçu du lien quand on le partage par message -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Veilleuse">
+<meta property="og:title" content="Veilleuse — le babyphone collectif de la soirée">
+<meta property="og:description" content="Les enfants dorment dans les chalets, vous dansez dans la salle. Chaque couple laisse un téléphone qui écoute : dès qu'un enfant pleure, tout le monde est prévenu. Sans installation ni compte.">
+<meta property="og:image" content="https://veilleuse.40ansdesilou.fr/static/icon-512.png">
+<meta property="og:url" content="https://veilleuse.40ansdesilou.fr/">
+<meta property="og:locale" content="fr_FR">
+<meta name="twitter:card" content="summary">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
@@ -43,7 +53,7 @@
     </div>
     <button type="submit" data-role="sono" class="btn ghost small">🖥️ Écran de la sono (affichage plein écran)</button>
   </form>
-  <p class="fine">Aucun compte, aucune donnée conservée : un code par soirée, c'est tout.</p>
+  <p class="fine">Aucun compte, aucune donnée conservée : un code par soirée, c'est tout.<br><a href="/aide" class="aide-link">Comment ça marche ?</a></p>
 </section>
 
 <!-- ============ Chalet : réglage ============ -->
@@ -61,7 +71,7 @@
         <div class="meter"><div id="setup-level" class="meter-fill"></div><div id="setup-thr" class="meter-thr"></div></div>
       </div>
       <input id="in-threshold" type="range" min="10" max="95" value="55">
-      <small class="hint">Le trait orange est le seuil. Parlez normalement : la barre doit rester en dessous. Un pleur doit passer au-dessus. <span id="setup-mic-state">Micro non activé.</span></small>
+      <small class="hint">Le trait orange est le seuil. Parlez normalement : la barre doit rester en dessous. Un pleur doit passer au-dessus. Sur iPhone, le micro s'adapte au bruit ambiant : réglez dans les conditions réelles, porte fermée. <span id="setup-mic-state">Micro non activé.</span></small>
     </label>
     <button type="button" id="btn-mic" class="btn secondary">🎙️ Activer le micro pour régler</button>
     <button type="submit" class="btn primary">Armer la veille</button>
@@ -72,6 +82,7 @@
 <section id="view-chalet-run" class="view hidden dark-run">
   <div class="run-top">
     <div id="run-conn" class="pill">connexion…</div>
+    <div id="run-wake" class="pill"></div>
     <div id="run-batt" class="pill"></div>
   </div>
   <div class="run-center">
@@ -80,13 +91,14 @@
     <div id="run-kids" class="run-kids"></div>
     <div class="meter big"><div id="run-level" class="meter-fill"></div><div id="run-thr" class="meter-thr"></div></div>
     <div id="run-msg" class="run-msg">Les parents sont prévenus dès qu'un bruit dépasse le seuil.</div>
+    <button id="btn-remic" class="btn primary hidden">🎙️ Réactiver le micro</button>
   </div>
   <div class="checklist card">
     <strong>Avant de partir danser</strong>
     <ul>
       <li>🔌 Téléphone branché au chargeur</li>
       <li>📵 Mode « Ne pas déranger » activé</li>
-      <li>🔆 Écran allumé, cette page au premier plan (ne pas verrouiller)</li>
+      <li>🔆 Écran allumé, cette page au premier plan (ne pas verrouiller) — si ⚠️ en haut, désactivez le verrouillage automatique dans les réglages</li>
       <li>👏 Tapez dans les mains : votre conjoint doit voir le chalet sonner</li>
     </ul>
   </div>

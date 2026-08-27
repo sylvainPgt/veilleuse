@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1117">
+<title>Veilleuse — comment ça marche ?</title>
+<meta name="description" content="Le babyphone collectif de la soirée, expliqué en deux minutes : ce qu'il faut faire au coucher, ce qu'on voit à la salle, et quoi faire quand ça sonne.">
+<!-- Aperçu du lien quand on le partage par message -->
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Veilleuse">
+<meta property="og:title" content="Veilleuse — comment ça marche ?">
+<meta property="og:description" content="Le babyphone collectif de la soirée, expliqué en deux minutes : ce qu'il faut faire au coucher, ce qu'on voit à la salle, et quoi faire quand ça sonne.">
+<meta property="og:image" content="https://veilleuse.40ansdesilou.fr/static/icon-512.png">
+<meta property="og:url" content="https://veilleuse.40ansdesilou.fr/aide">
+<meta property="og:locale" content="fr_FR">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .aide h2 { font-size: 1.25rem; margin: 1.8rem 0 .4rem; }
+  .aide p, .aide li { color: var(--text); line-height: 1.55; }
+  .aide .lead { color: var(--muted); }
+  .aide ul, .aide ol { padding-left: 1.2rem; margin: .4rem 0; }
+  .aide li { margin-bottom: .4rem; }
+  .legend { list-style: none; padding: 0; }
+  .legend li { display: flex; align-items: baseline; gap: .6rem; }
+  .dot { width: .7rem; height: .7rem; border-radius: 50%; flex: none; transform: translateY(.1rem); }
+  .dot.g { background: var(--green); }
+  .dot.o { background: var(--orange); }
+  .dot.r { background: var(--red); }
+  .dot.a { background: var(--amber); }
+  .dot.m { background: var(--grey); }
+  .aide .card { gap: .4rem; }
+  .aide .card strong.t { font-size: 1.05rem; }
+  .backlink { display: inline-block; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<section class="view aide">
+  <div class="hero">
+    <img src="/static/icon.svg" alt="" class="logo">
+    <h1>Comment ça marche&nbsp;?</h1>
+    <p class="tagline">Les enfants dorment dans les chalets, vous dansez dans la salle, tout le monde veille.</p>
+  </div>
+
+  <h2>Le principe</h2>
+  <p>Chaque couple laisse un téléphone dans le chalet et garde l'autre à la soirée. Pas d'application à installer, pas de compte&nbsp;: on ouvre la page, on entre le code de la soirée et son prénom, et on choisit son rôle.</p>
+  <ul>
+    <li><strong>🛏️ Je reste au chalet</strong> — ce téléphone écoute les enfants et alerte si un bruit dépasse le seuil.</li>
+    <li><strong>🎉 Je vais à la salle</strong> — ce téléphone reçoit les alertes de tous les chalets.</li>
+  </ul>
+  <p class="lead">L'écran de la sono affiche le même tableau en grand&nbsp;: même si un téléphone est au fond d'une poche, personne ne rate une alerte.</p>
+
+  <h2>Au coucher des enfants</h2>
+  <ol>
+    <li>Sur le téléphone qui reste&nbsp;: «&nbsp;Je reste au chalet&nbsp;», nom du chalet, prénoms des enfants.</li>
+    <li>Réglez la sensibilité avec le vu-mètre&nbsp;: en parlant normalement la barre reste sous le trait, un pleur doit le dépasser.</li>
+    <li>«&nbsp;Armer la veille&nbsp;», puis la petite checklist&nbsp;: chargeur branché, mode «&nbsp;Ne pas déranger&nbsp;», écran allumé avec la page au premier plan.</li>
+    <li>👏 Avant de partir, tapez dans les mains&nbsp;: le téléphone de votre conjoint doit sonner. Si c'est bon, allez danser.</li>
+  </ol>
+
+  <h2>À la salle</h2>
+  <p>Tapez une fois sur <strong>«&nbsp;Activer les alertes&nbsp;»</strong> (sans ça, le navigateur n'a pas le droit de faire sonner ni vibrer le téléphone), puis choisissez votre chalet dans «&nbsp;Mon chalet&nbsp;». Vous voyez alors une tuile par chalet&nbsp;:</p>
+  <ul class="legend">
+    <li><span class="dot g"></span><span><strong>Vert</strong> — tout va bien, le chalet donne des nouvelles.</span></li>
+    <li><span class="dot o"></span><span><strong>Orange</strong> — un bruit court, pas de quoi s'inquiéter.</span></li>
+    <li><span class="dot r"></span><span><strong>Rouge</strong> — ça sonne&nbsp;! Un vrai bruit qui dure.</span></li>
+    <li><span class="dot a"></span><span><strong>Ambre</strong> — quelqu'un a répondu et il est en route.</span></li>
+    <li><span class="dot m"></span><span><strong>Gris «&nbsp;chalet muet&nbsp;»</strong> — plus de nouvelles depuis 45 secondes (téléphone verrouillé, batterie vide, réseau perdu)&nbsp;: quelqu'un va jeter un œil.</span></li>
+  </ul>
+
+  <h2>Quand ça sonne</h2>
+  <p>Le couple concerné reçoit une alerte forte, les autres une alerte douce. N'importe qui peut taper <strong>«&nbsp;J'y vais&nbsp;»</strong>&nbsp;: tous les téléphones l'affichent, inutile d'y aller à dix. Sur place, on écoute, on console, et on tape <strong>«&nbsp;C'est réglé&nbsp;»</strong>.</p>
+  <p>Si personne ne répond en 90 secondes, l'alerte passe en rouge clignotant sur tous les écrans, y compris celui de la sono — le DJ peut baisser la musique et l'annoncer au micro.</p>
+  <p class="lead">Le bouton ▶︎ sur la tuile fait entendre un clip de 4 secondes enregistré au moment de l'alerte, pour répondre à la question «&nbsp;il pleure vraiment&nbsp;?&nbsp;».</p>
+
+  <div class="card">
+    <strong class="t">🕯️ Bon à savoir</strong>
+    <ul>
+      <li><strong>Le silence est une alerte.</strong> Un chalet qui se tait passe en «&nbsp;muet&nbsp;» sur tous les écrans&nbsp;: on préfère un déplacement pour rien à un faux silence.</li>
+      <li><strong>Rien n'est conservé.</strong> Pas de compte, pas d'enregistrement&nbsp;: tout s'efface à la fin de la soirée.</li>
+      <li><strong>Un tour de ronde de temps en temps reste une bonne idée.</strong> L'app détecte les pleurs, pas un enfant qui se lève sans bruit. Ce n'est pas un dispositif médical, c'est de l'entraide entre parents.</li>
+    </ul>
+  </div>
+
+  <a class="btn primary backlink" href="/">‹ Rejoindre la soirée</a>
+  <p class="fine">Veilleuse — le babyphone collectif des soirées en gîte.</p>
+</section>
+</body>
+</html>

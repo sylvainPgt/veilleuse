@@ -59,7 +59,6 @@ class Chalet:
         self.last_noise: float | None = None
         self.online = False
         self.alert: dict[str, Any] | None = None  # {started, acked_by, acked_at, escalated, clip, level}
-        self.emitter_connected = False
 
     def status(self) -> str:
         if self.alert:
@@ -276,9 +275,6 @@ async def websocket_endpoint(ws: WebSocket, code: str) -> None:
         log.exception("websocket")
     finally:
         party.sockets.pop(ws, None)
-        chalet = party.chalets.get(meta.get("chalet_id") or "")
-        if chalet and meta.get("role") == "chalet":
-            chalet.emitter_connected = False
         await party.broadcast()
 
 
@@ -295,7 +291,6 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
         chalet = party.register_chalet(slug(msg.get("chalet_id") or msg.get("name", "")),
                                        (msg.get("name") or "Chalet")[:40], (msg.get("kids") or "")[:80])
         meta["role"], meta["chalet_id"] = "chalet", chalet.id
-        chalet.emitter_connected = True
         await ws.send_text(json.dumps({"type": "registered", "chalet_id": chalet.id}))
         return True
 
@@ -339,6 +334,11 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/aide")
+async def aide() -> FileResponse:
+    return FileResponse(STATIC_DIR / "aide.html")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

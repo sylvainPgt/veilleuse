@@ -58,7 +58,7 @@
   // ---------- wake lock (garde l'écran allumé) ----------
   let wakeLock = null;
   async function keepAwake() {
-    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* pas dispo */ }
+    try { wakeLock = await navigator.wakeLock?.request("screen"); return !!wakeLock; } catch { return false; }
   }
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && wakeLock !== null) keepAwake(); });
 
@@ -84,13 +84,26 @@
   //  ÉMETTEUR (chalet)
   // ============================================================
   const detector = {
-    ctx: null, analyser: null, stream: null, raf: null, buf: null, level: 0, onLevel: null, recorder: null,
+    ctx: null, analyser: null, stream: null, raf: null, buf: null, level: 0, onLevel: null, onMicState: null, recorder: null,
+    micAlive() {
+      const t = this.stream?.getAudioTracks()[0];
+      return !!t && t.readyState === "live" && !t.muted;
+    },
     async start() {
-      if (this.stream) return true;
+      if (this.stream) {
+        if (this.micAlive()) return true;
+        this.stop(); // le flux existe mais le micro est mort : on repart de zéro
+      }
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       } catch (err) { toast("Micro refusé : " + err.message, 4000); return false; }
+      // Perte du micro : appel entrant, Siri, verrouillage… (iOS coupe la piste sans prévenir autrement)
+      const track = this.stream.getAudioTracks()[0];
+      track.addEventListener("ended", () => this.onMicState?.("ended"));
+      track.addEventListener("mute", () => this.onMicState?.("muted"));
+      track.addEventListener("unmute", () => this.onMicState?.("live"));
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (this.ctx.state === "suspended") { try { await this.ctx.resume(); } catch { /* tant pis */ } }
       const src = this.ctx.createMediaStreamSource(this.stream);
       this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 2048;
       src.connect(this.analyser);
@@ -117,7 +130,8 @@
     recordClip(ms = 4000) {
       return new Promise((resolve) => {
         if (!this.stream || typeof MediaRecorder === "undefined") return resolve(null);
-        const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", ""].find((m) => !m || MediaRecorder.isTypeSupported(m));
+        let mime = "";
+        try { mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || ""; } catch { /* vieux navigateur */ }
         let rec; try { rec = new MediaRecorder(this.stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : { audioBitsPerSecond: 24000 }); } catch { return resolve(null); }
         const chunks = [];
         rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
@@ -155,7 +169,13 @@
   function startChaletRun() {
     session.role = "chalet";
     $("run-chalet").textContent = chalet.name; $("run-kids").textContent = chalet.kids; $("run-thr").style.left = chalet.threshold + "%";
-    show("chalet-run"); keepAwake();
+    show("chalet-run");
+    keepAwake().then((ok) => {
+      const p = $("run-wake");
+      p.textContent = ok ? "☀️ écran maintenu" : "⚠️ écran non maintenu";
+      p.className = "pill " + (ok ? "ok" : "bad");
+      if (!ok) toast("Ce téléphone ne sait pas garder l'écran allumé : désactivez le verrouillage automatique dans les réglages.", 6000);
+    });
 
     net.hello = { type: "register", chalet_id: chalet.id, name: chalet.name, kids: chalet.kids };
     net.onConn = (ok) => { const p = $("run-conn"); p.textContent = ok ? "● connecté" : "○ reconnexion…"; p.className = "pill " + (ok ? "ok" : "bad"); if (ok) sendHeartbeat(); };
@@ -163,6 +183,7 @@
       if (m.type !== "state") return;
       const me = m.chalets.find((c) => c.id === chalet.id);
       chalet.alerting = !!(me && me.alert);
+      if (!detector.micAlive()) return; // l'écran « micro coupé » prime sur l'état serveur
       const st = $("run-status");
       if (!me?.alert) { st.textContent = "Veille active"; st.className = "run-status"; $("run-msg").textContent = "Les parents sont prévenus dès qu'un bruit dépasse le seuil."; }
       else if (me.alert.acked_by) { st.textContent = `${me.alert.acked_by} arrive`; st.className = "run-status alert"; $("run-msg").textContent = "Quelqu'un est en route."; }
@@ -171,10 +192,38 @@
     net.connect();
 
     detector.onLevel = onChaletLevel;
+    detector.onMicState = onMicState;
     chalet.hbTimer = setInterval(sendHeartbeat, 15000);
   }
 
+  // Micro perdu (appel entrant, verrouillage…) : on prévient ici et on cesse d'envoyer des
+  // heartbeats « tout va bien » — le silence est une alerte, la salle verra « chalet muet ».
+  function onMicState(state) {
+    if (session.role !== "chalet") return;
+    if (state === "live") { setChaletIdleUi(); sendHeartbeat(); toast("Micro rétabli"); return; }
+    if (state === "ended") detector.stop();
+    const st = $("run-status");
+    st.textContent = "Micro coupé !"; st.className = "run-status alert";
+    $("run-msg").textContent = "La veille est interrompue : le chalet va passer « muet » sur les téléphones de la salle. Réactivez le micro.";
+    $("btn-remic").classList.remove("hidden");
+    if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+  }
+
+  function setChaletIdleUi() {
+    const st = $("run-status");
+    st.textContent = "Veille active"; st.className = "run-status";
+    $("run-msg").textContent = "Les parents sont prévenus dès qu'un bruit dépasse le seuil.";
+    $("btn-remic").classList.add("hidden");
+  }
+
+  $("btn-remic").addEventListener("click", async () => {
+    if (!(await detector.start())) return;
+    detector.onLevel = onChaletLevel;
+    setChaletIdleUi(); sendHeartbeat(); toast("Micro rétabli");
+  });
+
   async function sendHeartbeat() {
+    if (!detector.micAlive()) return; // micro mort : on se tait, le serveur passera le chalet en « muet »
     let battery = null;
     try { const b = await navigator.getBattery?.(); if (b) battery = Math.round(b.level * 100); } catch { /* iOS */ }
     $("run-batt").textContent = battery != null ? `🔋 ${battery} %` : "";
