@@ -419,7 +419,7 @@
       const secondary = [
         c.status !== "offline"
           ? `<button class="btn ghost" data-listen="${esc(c.id)}">${ic("i-speaker")} ${salle.awaitingClip === c.id ? "…" : "Écouter"}</button>` : "",
-        c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}" aria-label="Réécouter">${ic("i-replay")}</button>` : "",
+        c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}">${ic("i-replay")} Réécouter</button>` : "",
         a?.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}" aria-label="Écouter l'alerte">${ic("i-play")}</button>` : "",
         a ? `<button class="btn ghost" data-resolve="${esc(c.id)}">C'est réglé</button>` : "",
       ].filter(Boolean).join("");
@@ -475,7 +475,7 @@
       const r = await fetch(`/api/party/${encodeURIComponent(session.code)}/chalet/${encodeURIComponent(id)}/clip?kind=${kind}`);
       if (!r.ok) return toast("Pas de clip disponible");
       const { clip } = await r.json(); const p = $("clip-player"); p.src = clip;
-      try { await p.play(); } catch { toast("Appuyez sur ↻ pour écouter l'enregistrement", 5000); }
+      try { await p.play(); } catch { toast("Enregistrement prêt : appuyez sur « Réécouter »", 5000); }
       renderTiles();
     } catch { toast("Lecture impossible"); }
   }

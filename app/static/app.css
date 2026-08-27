@@ -42,7 +42,8 @@ small, .hint { color: var(--muted); font-size: var(--t-sm); font-weight: 400; }
 .logo { width: 84px; height: 84px; filter: drop-shadow(0 8px 24px rgba(255,214,51,.3)); }
 .tagline { color: var(--muted); margin: var(--s2) auto 0; max-width: 420px; }
 .fine { text-align: center; color: var(--grey); font-size: var(--t-xs); line-height: 1.7; }
-.aide-link { color: var(--amber); }
+/* Qualifié par a : sinon .btn (inline-flex) gagne et les marges auto ne centrent plus. */
+a.aide-link { color: var(--amber); display: flex; width: fit-content; margin: var(--s3) auto 0; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s4); margin-top: var(--s4); }
 label { display: flex; flex-direction: column; gap: var(--s2); font-weight: 600; font-size: var(--t-sm); }
@@ -206,8 +207,14 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 }
 
 /* ---------- Mode sono : gros, lisible de loin ---------- */
-body.sono .view { max-width: none; padding: var(--s5) var(--s6); }
+/* Les tuiles remplissent la hauteur : cet écran se lit à dix mètres, à travers une salle. */
+body.sono .view { max-width: none; padding: var(--s5) var(--s6); min-height: 100dvh; display: flex; flex-direction: column; }
+body.sono .tiles { flex: 1; grid-auto-rows: 1fr; align-content: stretch; }
+body.sono .tile { justify-content: center; }
 body.sono .own-picker, body.sono .events, body.sono .arm-card p { display: none; }
+/* Écran partagé : aucun chalet n'y est « le mien ». */
+body.sono .tile .tag { display: none; }
+body.sono .tile.own { box-shadow: none; }
 body.sono .tiles { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--s5); }
 body.sono .tile { padding: var(--s5) var(--s5) var(--s5) var(--s6); }
 body.sono .tile::before { width: 8px; }
