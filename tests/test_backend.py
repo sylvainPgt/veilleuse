@@ -15,6 +15,28 @@ def _clean():
     parties.clear()
 
 
+def recv_until(sock, kind: str, limit: int = 8) -> dict:
+    """Lit jusqu'au message attendu.
+
+    Le serveur intercale des diffusions d'état, et TestClient ne garantit pas
+    l'ordre entre deux sockets ; on ne veut pas d'un test qui dépend de ça.
+    """
+    for _ in range(limit):
+        msg = sock.receive_json()
+        if msg.get("type") == kind:
+            return msg
+    raise AssertionError(f"message « {kind} » jamais reçu")
+
+
+def recv_until_state(sock, predicate, limit: int = 8) -> dict:
+    """Lit jusqu'à l'état qui satisfait la condition (les précédents sont périmés)."""
+    for _ in range(limit):
+        msg = sock.receive_json()
+        if msg.get("type") == "state" and predicate(msg):
+            return msg
+    raise AssertionError("état attendu jamais reçu")
+
+
 def test_slug():
     assert main.slug("Anniv Sylvain !") == "anniv-sylvain"
     assert main.slug("") == "soiree"
@@ -72,37 +94,86 @@ def test_http_endpoints():
 
 
 def test_websocket_flow():
-    client = TestClient(app)
-    with client.websocket_connect("/ws/fete") as emitter, client.websocket_connect("/ws/fete") as receiver:
-        assert emitter.receive_json()["type"] == "state"
-        assert receiver.receive_json()["type"] == "state"
-        receiver.send_json({"type": "hello", "role": "salle", "name": "Marie"})
-        receiver.receive_json(); emitter.receive_json()  # diffusion après hello
+    with TestClient(app) as client:  # un seul portail : les deux sockets partagent la boucle
+        with client.websocket_connect("/ws/fete") as emitter, client.websocket_connect("/ws/fete") as receiver:
+            recv_until(emitter, "state"); recv_until(receiver, "state")
+            receiver.send_json({"type": "hello", "role": "salle", "name": "Marie"})
+            emitter.send_json({"type": "register", "chalet_id": "mesange", "name": "Mésange", "kids": "Léo"})
+            assert recv_until(emitter, "registered") == {"type": "registered", "chalet_id": "mesange"}
 
-        emitter.send_json({"type": "register", "chalet_id": "mesange", "name": "Mésange", "kids": "Léo"})
-        assert emitter.receive_json() == {"type": "registered", "chalet_id": "mesange"}
-        st = receiver.receive_json(); emitter.receive_json()
-        assert st["chalets"][0]["name"] == "Mésange" and "Marie" in st["receivers"]
+            chalet = main.parties["fete"].chalets["mesange"]
+            st = recv_until_state(receiver, lambda s: s["chalets"] and s["chalets"][0]["name"] == "Mésange")
+            assert "Marie" in st["receivers"]
 
-        emitter.send_json({"type": "hb", "level": 12, "battery": 77, "threshold": 50})
-        st = receiver.receive_json(); emitter.receive_json()
-        assert st["type"] == "state" and st["chalets"][0]["status"] == "ok"
+            emitter.send_json({"type": "hb", "level": 12, "battery": 77, "threshold": 50})
+            recv_until_state(receiver, lambda s: s["chalets"][0]["status"] == "ok")
 
-        emitter.send_json({"type": "hb", "level": 20, "battery": 76, "threshold": 50})  # niveau seul → message léger
-        lv = receiver.receive_json(); emitter.receive_json()
-        assert lv["type"] == "level" and lv["level"] == 20
+            emitter.send_json({"type": "hb", "level": 20, "battery": 76, "threshold": 50})  # niveau seul → message léger
+            lv = recv_until(receiver, "level")
+            assert lv["level"] == 20
 
-        emitter.send_json({"type": "alert", "level": 90})
-        st = receiver.receive_json(); emitter.receive_json()
-        assert st["chalets"][0]["status"] == "alert"
+            emitter.send_json({"type": "alert", "level": 90})
+            recv_until_state(receiver, lambda s: s["chalets"][0]["status"] == "alert")
 
-        receiver.send_json({"type": "ack", "chalet_id": "mesange"})
-        st = receiver.receive_json(); emitter.receive_json()
-        assert st["chalets"][0]["alert"]["acked_by"] == "Marie"
+            receiver.send_json({"type": "ack", "chalet_id": "mesange"})
+            recv_until_state(receiver, lambda s: (s["chalets"][0]["alert"] or {}).get("acked_by") == "Marie")
 
-        receiver.send_json({"type": "resolve", "chalet_id": "mesange"})
-        st = receiver.receive_json(); emitter.receive_json()
-        assert st["chalets"][0]["status"] == "ok"
+            receiver.send_json({"type": "resolve", "chalet_id": "mesange"})
+            recv_until_state(receiver, lambda s: s["chalets"][0]["status"] == "ok")
+            assert chalet.alert is None
 
-        receiver.send_json({"type": "ping"})
-        assert receiver.receive_json()["type"] == "pong"
+            receiver.send_json({"type": "ping"})
+            assert recv_until(receiver, "pong")["type"] == "pong"
+
+
+def test_listen_on_demand():
+    """La salle demande à entendre, le chalet enregistre, tout le monde peut lire."""
+    with TestClient(app) as client:  # un seul portail : les deux sockets partagent la boucle
+        with client.websocket_connect("/ws/ecoute") as emitter, client.websocket_connect("/ws/ecoute") as receiver:
+            recv_until(emitter, "state"); recv_until(receiver, "state")
+            receiver.send_json({"type": "hello", "role": "salle", "name": "Marie"})
+            emitter.send_json({"type": "register", "chalet_id": "mesange", "name": "Mésange", "kids": ""})
+            recv_until(emitter, "registered")
+
+            receiver.send_json({"type": "listen", "chalet_id": "mesange"})
+            # la demande part vers l'émetteur seul, pas en diffusion
+            ask = recv_until(emitter, "clip_request")
+            assert ask == {"type": "clip_request", "seconds": main.LISTEN_SECONDS, "by": "Marie"}
+            chalet = main.parties["ecoute"].chalets["mesange"]
+            assert chalet.listen_by == "Marie"  # « Marie écoute » visible partout
+            assert chalet.to_dict()["listen_by"] == "Marie"
+
+            emitter.send_json({"type": "clip", "chalet_id": "mesange", "clip": "data:audio/mp4;base64,AAAA"})
+            ready = recv_until(receiver, "clip_ready")
+            assert ready["chalet_id"] == "mesange"
+            assert ready["ts"] == pytest.approx(time.time(), abs=5)
+
+        body = client.get("/api/party/ecoute/chalet/mesange/clip").json()
+        assert body["clip"] == "data:audio/mp4;base64,AAAA" and body["by"] == "Marie"
+
+    # « X écoute » s'efface tout seul
+    party = main.parties["ecoute"]
+    party.chalets["mesange"].listen_at -= main.LISTEN_HOLD + 1
+    assert party.watchdog()
+    assert party.chalets["mesange"].listen_by is None
+
+
+def test_listen_without_emitter_is_refused():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/vide") as receiver:
+            recv_until(receiver, "state")
+            main.get_party("vide").register_chalet("absent", "Absent", "")
+            receiver.send_json({"type": "listen", "chalet_id": "absent", "by": "Paul"})
+            m = recv_until(receiver, "listen_failed")
+            assert "pas connecté" in m["reason"]
+
+
+def test_oversized_on_demand_clip_is_refused():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/gros") as emitter:
+            recv_until(emitter, "state")
+            emitter.send_json({"type": "register", "chalet_id": "m", "name": "M", "kids": ""})
+            recv_until(emitter, "registered")
+            emitter.send_json({"type": "clip", "chalet_id": "m", "clip": "x" * (main.MAX_CLIP_BYTES + 1)})
+            recv_until(emitter, "listen_failed")
+            assert main.parties["gros"].chalets["m"].clip is None

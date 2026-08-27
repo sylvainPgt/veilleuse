@@ -180,6 +180,7 @@
     net.hello = { type: "register", chalet_id: chalet.id, name: chalet.name, kids: chalet.kids };
     net.onConn = (ok) => { const p = $("run-conn"); p.textContent = ok ? "● connecté" : "○ reconnexion…"; p.className = "pill " + (ok ? "ok" : "bad"); if (ok) sendHeartbeat(); };
     net.onMessage = (m) => {
+      if (m.type === "clip_request") return serveClipRequest(m);
       if (m.type !== "state") return;
       const me = m.chalets.find((c) => c.id === chalet.id);
       chalet.alerting = !!(me && me.alert);
@@ -251,6 +252,17 @@
     const clip = await detector.recordClip(4000);                            // puis le clip si possible
     if (clip) net.send({ type: "alert", chalet_id: chalet.id, level, reason, clip }, { queueIfOffline: false });
   }
+  // Quelqu'un de la salle demande à entendre ce qui se passe : on enregistre et on renvoie.
+  async function serveClipRequest(m) {
+    if (!detector.micAlive()) return;
+    const who = m.by || "Quelqu'un";
+    $("run-listen").textContent = `🔊 ${who} écoute…`;
+    $("run-listen").classList.remove("hidden");
+    const clip = await detector.recordClip(Math.min(Math.max((m.seconds || 10) * 1000, 2000), 15000));
+    if (clip) net.send({ type: "clip", chalet_id: chalet.id, clip }, { queueIfOffline: false });
+    setTimeout(() => $("run-listen").classList.add("hidden"), 3000);
+  }
+
   $("btn-test").addEventListener("click", () => { net.send({ type: "test", chalet_id: chalet.id }); toast("Alerte de test envoyée"); });
   $("btn-stop").addEventListener("click", () => { clearInterval(chalet.hbTimer); stopEverything(); show("home"); });
 
@@ -258,7 +270,7 @@
   //  RÉCEPTEUR (salle) & ÉCRAN SONO
   // ============================================================
   const salle = {
-    state: null, prev: {}, armed: false, audio: null, ownId: store.get("own", ""), tickTimer: null, remindTimer: null, serverOffset: 0,
+    state: null, prev: {}, armed: false, audio: null, ownId: store.get("own", ""), tickTimer: null, remindTimer: null, serverOffset: 0, awaitingClip: null,
     stop() { clearInterval(this.tickTimer); clearInterval(this.remindTimer); this.state = null; this.prev = {}; $("overlay").classList.add("hidden"); },
   };
 
@@ -289,6 +301,14 @@
     if (m.type === "level") {
       const c = salle.state?.chalets.find((x) => x.id === m.chalet_id); if (c) { c.level = m.level; c.battery = m.battery; c.last_hb = m.ts; }
       const bar = document.querySelector(`.tile[data-id="${m.chalet_id}"] .meter-fill`); if (bar) bar.style.width = m.level + "%";
+      return;
+    }
+    if (m.type === "clip_ready") {
+      if (salle.awaitingClip === m.chalet_id) { salle.awaitingClip = null; playClip(m.chalet_id, "fresh"); }
+      return;
+    }
+    if (m.type === "listen_failed") {
+      if (salle.awaitingClip === m.chalet_id) { salle.awaitingClip = null; toast(m.reason || "Écoute impossible", 4000); }
       return;
     }
     if (m.type !== "state") return;
@@ -367,14 +387,19 @@
         line = a.acked_by ? `${esc(a.acked_by)} y va (depuis ${fmtAgo(now - a.acked_at)})` : `sonne depuis ${fmtAgo(now - a.started)}`;
         if (a.reason === "test") line = "test · " + line;
       } else if (c.status === "offline") line = c.last_hb ? `plus de nouvelles depuis ${fmtAgo(now - c.last_hb)}` : "jamais connecté";
+      // Écouter = demander du frais. Réécouter = rejouer le dernier reçu (aussi le
+      // repli quand iOS refuse la lecture automatique faute de geste utilisateur.)
+      const listen = (c.status !== "offline"
+        ? `<button class="btn ghost" data-listen="${esc(c.id)}">${salle.awaitingClip === c.id ? "🔊 …" : "🔊 Écouter"}</button>` : "")
+        + (c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}">↻</button>` : "");
       const actions = a
-        ? `<div class="actions">${a.acked_by ? "" : `<button class="btn primary" data-ack="${esc(c.id)}">J'y vais</button>`}<button class="btn secondary" data-resolve="${esc(c.id)}">C'est réglé</button>${a.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}">▶︎</button>` : ""}</div>`
-        : "";
+        ? `<div class="actions">${a.acked_by ? "" : `<button class="btn primary" data-ack="${esc(c.id)}">J'y vais</button>`}<button class="btn secondary" data-resolve="${esc(c.id)}">C'est réglé</button>${a.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}">▶︎ L'alerte</button>` : ""}${listen}</div>`
+        : (listen ? `<div class="actions">${listen}</div>` : "");
       return `<div class="tile${c.id === salle.ownId ? " own" : ""}" data-id="${esc(c.id)}" data-status="${c.status}">
         <div class="name">${esc(c.name)}</div>
         <div class="kids">${esc(c.kids)}</div>
         <div class="meter"><div class="meter-fill" style="width:${c.level}%"></div><div class="meter-thr" style="left:${c.threshold ?? 55}%"></div></div>
-        <div class="status">${STATUS_LABEL[c.status] || c.status}</div>
+        <div class="status">${STATUS_LABEL[c.status] || c.status}${c.listen_by ? ` <span class="listening">🔊 ${esc(c.listen_by)} écoute</span>` : ""}</div>
         <div class="meta"><span>${esc(line)}</span><span>${c.battery != null ? "🔋 " + c.battery + " %" : ""}</span></div>
         ${actions}</div>`;
     }).join("");
@@ -389,17 +414,36 @@
     const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.ack) ack(b.dataset.ack);
     if (b.dataset.resolve) resolve(b.dataset.resolve);
-    if (b.dataset.clip) playClip(b.dataset.clip);
+    if (b.dataset.clip) playClip(b.dataset.clip, "alert");
+    if (b.dataset.replay) playClip(b.dataset.replay, "fresh");
+    if (b.dataset.listen) requestListen(b.dataset.listen);
   });
-  async function playClip(id) {
+
+  // Demande au chalet d'enregistrer ce qui se passe maintenant, et joue le résultat.
+  function requestListen(id) {
+    if (salle.awaitingClip) return toast("Une écoute est déjà en cours");
+    if (!net.send({ type: "listen", chalet_id: id, by: session.name }, { queueIfOffline: false })) {
+      return toast("Pas de connexion, réessayez");
+    }
+    salle.awaitingClip = id;
+    toast("Enregistrement en cours au chalet…", 4000);
+    renderTiles();
+    setTimeout(() => {
+      if (salle.awaitingClip === id) { salle.awaitingClip = null; toast("Le chalet n'a pas répondu", 4000); renderTiles(); }
+    }, 30000);
+  }
+
+  async function playClip(id, kind = "fresh") {
     try {
-      const r = await fetch(`/api/party/${encodeURIComponent(session.code)}/chalet/${encodeURIComponent(id)}/clip`);
+      const r = await fetch(`/api/party/${encodeURIComponent(session.code)}/chalet/${encodeURIComponent(id)}/clip?kind=${kind}`);
       if (!r.ok) return toast("Pas de clip disponible");
-      const { clip } = await r.json(); const p = $("clip-player"); p.src = clip; await p.play();
+      const { clip } = await r.json(); const p = $("clip-player"); p.src = clip;
+      try { await p.play(); } catch { toast("Appuyez sur ↻ pour écouter l'enregistrement", 5000); }
+      renderTiles();
     } catch { toast("Lecture impossible"); }
   }
 
-  const EVENT_LABEL = { registered: "a rejoint la soirée", online: "est connecté", offline: "ne donne plus de nouvelles", alert: "sonne", escalated: "sonne sans réponse — escalade", ack: "→ {by} y va", resolved: "réglé par {by}" };
+  const EVENT_LABEL = { registered: "a rejoint la soirée", online: "est connecté", offline: "ne donne plus de nouvelles", alert: "sonne", escalated: "sonne sans réponse — escalade", ack: "→ {by} y va", resolved: "réglé par {by}", listen: "→ {by} a écouté" };
   function renderEvents() {
     const html = [...salle.state.events].reverse().map((e) => `<li><time>${fmtTime(e.ts)}</time><strong>${esc(e.chalet_name || "")}</strong> ${esc((EVENT_LABEL[e.kind] || e.kind).replace("{by}", e.by || ""))}${e.reason === "test" ? " (test)" : ""}</li>`).join("");
     $("events").innerHTML = html;

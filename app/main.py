@@ -29,6 +29,8 @@ log = logging.getLogger("veilleuse")
 HEARTBEAT_TIMEOUT = float(os.getenv("VEILLEUSE_HEARTBEAT_TIMEOUT", "45"))   # s sans nouvelles → chalet muet
 ESCALATION_DELAY = float(os.getenv("VEILLEUSE_ESCALATION_DELAY", "90"))     # s sans acquittement → escalade
 NOISE_HOLD = float(os.getenv("VEILLEUSE_NOISE_HOLD", "20"))                 # s pendant lesquels un bruit reste affiché
+LISTEN_HOLD = float(os.getenv("VEILLEUSE_LISTEN_HOLD", "25"))               # s pendant lesquels « X écoute » reste affiché
+LISTEN_SECONDS = float(os.getenv("VEILLEUSE_LISTEN_SECONDS", "10"))         # durée du clip demandé à la volée
 WATCHDOG_PERIOD = 2.0
 MAX_EVENTS = 60
 MAX_CLIP_BYTES = 200_000  # clip audio base64, on refuse au-delà pour protéger le réseau faible
@@ -59,6 +61,9 @@ class Chalet:
         self.last_noise: float | None = None
         self.online = False
         self.alert: dict[str, Any] | None = None  # {started, acked_by, acked_at, escalated, clip, level}
+        self.clip: dict[str, Any] | None = None   # dernier clip demandé à la volée {data, ts, by}
+        self.listen_by: str | None = None         # qui écoute en ce moment
+        self.listen_at: float | None = None
 
     def status(self) -> str:
         if self.alert:
@@ -85,6 +90,8 @@ class Chalet:
             "last_hb": self.last_hb,
             "online": self.online,
             "alert": alert,
+            "listen_by": self.listen_by,
+            "has_fresh_clip": bool(self.clip),
         }
 
 
@@ -182,7 +189,15 @@ class Party:
             return
         chalet.alert = None
         chalet.last_noise = None
+        chalet.clip = None  # on ne garde pas d'audio une fois l'alerte réglée
         self.add_event("resolved", chalet, by=by or "quelqu'un")
+
+    def emitter_socket(self, chalet_id: str) -> WebSocket | None:
+        """La socket du téléphone posé dans ce chalet, s'il est connecté."""
+        for ws, meta in self.sockets.items():
+            if meta.get("role") == "chalet" and meta.get("chalet_id") == chalet_id:
+                return ws
+        return None
 
     def watchdog(self) -> bool:
         """Vérifie muets et escalades. Retourne True si quelque chose a changé."""
@@ -192,6 +207,9 @@ class Party:
             if chalet.online and chalet.last_hb and t - chalet.last_hb > HEARTBEAT_TIMEOUT:
                 chalet.online = False
                 self.add_event("offline", chalet)
+                changed = True
+            if chalet.listen_at and t - chalet.listen_at > LISTEN_HOLD:
+                chalet.listen_by = chalet.listen_at = None
                 changed = True
             a = chalet.alert
             if a and not a["acked_by"] and not a["escalated"] and t - a["started"] > ESCALATION_DELAY:
@@ -246,11 +264,16 @@ async def party_state(code: str) -> dict[str, Any]:
 
 
 @app.get("/api/party/{code}/chalet/{chalet_id}/clip")
-async def chalet_clip(code: str, chalet_id: str):
+async def chalet_clip(code: str, chalet_id: str, kind: str = "fresh"):
+    """kind=fresh : le dernier clip demandé à la volée. kind=alert : celui de l'alerte."""
     chalet = get_party(code).chalets.get(chalet_id)
-    if not chalet or not chalet.alert or not chalet.alert.get("clip"):
+    if not chalet:
         return JSONResponse({"error": "no clip"}, status_code=404)
-    return {"clip": chalet.alert["clip"]}
+    if kind == "fresh" and chalet.clip:
+        return {"clip": chalet.clip["data"], "ts": chalet.clip["ts"], "by": chalet.clip.get("by")}
+    if chalet.alert and chalet.alert.get("clip"):
+        return {"clip": chalet.alert["clip"], "ts": chalet.alert["started"]}
+    return JSONResponse({"error": "no clip"}, status_code=404)
 
 
 @app.websocket("/ws/{code}")
@@ -322,6 +345,28 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
     if kind == "test" and chalet:  # test manuel depuis l'émetteur : alerte de vérification
         party.raise_alert(chalet, 100, None, reason="test")
         return True
+
+    if kind == "listen" and chalet:  # récepteur : « fais-moi entendre ce qui se passe maintenant »
+        emitter = party.emitter_socket(chalet.id)
+        who = (msg.get("by") or meta.get("name") or "")[:40] or "quelqu'un"
+        if emitter is None:
+            await ws.send_text(json.dumps({"type": "listen_failed", "chalet_id": chalet.id,
+                                           "reason": "Ce chalet n'est pas connecté."}))
+            return False
+        chalet.listen_by, chalet.listen_at = who, now()
+        party.add_event("listen", chalet, by=who)
+        await emitter.send_text(json.dumps({"type": "clip_request", "seconds": LISTEN_SECONDS, "by": who}))
+        return True
+
+    if kind == "clip" and chalet:  # émetteur : voici l'enregistrement demandé
+        clip = msg.get("clip")
+        if clip and len(clip) <= MAX_CLIP_BYTES:
+            chalet.clip = {"data": clip, "ts": now(), "by": chalet.listen_by}
+            await party.broadcast({"type": "clip_ready", "chalet_id": chalet.id, "ts": now()})
+        else:
+            await party.broadcast({"type": "listen_failed", "chalet_id": chalet.id,
+                                   "reason": "Le réseau n'a pas laissé passer l'enregistrement."})
+        return False
 
     if kind == "ping":
         await ws.send_text(json.dumps({"type": "pong", "ts": now()}))

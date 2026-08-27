@@ -79,6 +79,7 @@ input[type=range] { width: 100%; accent-color: var(--amber); }
 .run-chalet { font-size: 2.4rem; font-weight: 800; margin: .3rem 0 0; }
 .run-kids { color: var(--muted); margin-bottom: 1.2rem; }
 .run-msg { color: var(--muted); margin-top: 1rem; font-size: .95rem; }
+.run-listen { margin-top: 1rem; font-weight: 700; color: var(--amber); animation: blink 1.4s infinite; }
 .checklist ul { margin: 0; padding-left: .2rem; list-style: none; color: var(--muted); line-height: 1.7; }
 .run-actions { display: flex; flex-direction: column; gap: .6rem; margin-top: auto; }
 @keyframes blink { 50% { opacity: .35; } }
@@ -93,6 +94,7 @@ input[type=range] { width: 100%; accent-color: var(--amber); }
 .tile .kids { color: var(--muted); font-size: .9rem; min-height: 1.2em; }
 .tile .meta { display: flex; justify-content: space-between; font-size: .8rem; color: var(--muted); }
 .tile .status { font-weight: 700; font-size: .85rem; letter-spacing: .03em; text-transform: uppercase; }
+.tile .listening { color: var(--amber); text-transform: none; letter-spacing: 0; font-weight: 600; }
 .tile .actions { display: flex; gap: .5rem; margin-top: .2rem; }
 .tile .actions .btn { flex: 1; padding: .6rem; font-size: .9rem; }
 .tile.own { box-shadow: 0 0 0 2px var(--amber) inset; }

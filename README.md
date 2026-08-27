@@ -32,7 +32,7 @@ Une fête dans un domaine de chalets. À 22 h, on couche les enfants dans les ch
 Chaque couple laisse un téléphone dans le chalet et garde l'autre à la soirée. **Veilleuse** est une webapp, sans installation ni compte : un code de soirée, un prénom, et deux rôles.
 
 - **Je reste au chalet** — le téléphone écoute. Il analyse le micro localement et n'envoie que de minuscules messages : un battement de cœur toutes les 15 secondes, une alerte quand un bruit dépasse le seuil, un clip audio de 4 secondes si le réseau le permet.
-- **Je vais à la salle** — le téléphone reçoit. Une tuile par chalet, verte / orange / rouge. Quand un chalet sonne, tout le monde le voit, le couple concerné reçoit une alerte forte, les autres une alerte douce. Le premier qui tape **« J'y vais »** prévient tous les autres.
+- **Je vais à la salle** — le téléphone reçoit. Une tuile par chalet, verte / orange / rouge. Quand un chalet sonne, tout le monde le voit, le couple concerné reçoit une alerte forte, les autres une alerte douce. Le premier qui tape **« J'y vais »** prévient tous les autres. Un bouton **« 🔊 Écouter »** permet à tout moment de se faire renvoyer 10 secondes de son du chalet.
 - **Écran de la sono** — le même tableau en plein écran sur le PC qui passe la musique. Un chalet qui sonne remplit l'écran de rouge avec son nom en géant, le DJ peut baisser le son et l'annoncer au micro.
 
 Et surtout, **le silence est une alerte** : si un chalet ne donne plus de nouvelles pendant 45 secondes (téléphone verrouillé, batterie vide, réseau perdu), il passe en « chalet muet » sur tous les écrans. Un babyphone qui se tait ne rassure personne.
@@ -104,6 +104,10 @@ Un tour de ronde physique toutes les 30 à 45 minutes reste une bonne idée : l'
 | → | `{"type":"alert","level","clip?","reason?"}` | Émetteur : alerte (le clip peut arriver dans un second message) |
 | → | `{"type":"hello","role":"salle","name"}` | Récepteur : s'identifie |
 | → | `{"type":"ack","chalet_id","by"}` / `resolve` | Récepteur : j'y vais / c'est réglé |
+| → | `{"type":"listen","chalet_id","by"}` | Récepteur : fais-moi entendre ce qui se passe maintenant |
+| ← | `{"type":"clip_request","seconds","by"}` | Serveur → émetteur seul : enregistre et renvoie |
+| → | `{"type":"clip","chalet_id","clip"}` | Émetteur : voici l'enregistrement demandé |
+| ← | `{"type":"clip_ready","chalet_id","ts"}` / `listen_failed` | Serveur : le clip est prêt / l'écoute a échoué |
 | ← | `{"type":"state", chalets:[…], events:[…], now}` | Serveur : état complet à chaque changement |
 | ← | `{"type":"level","chalet_id","level","battery","ts"}` | Serveur : mise à jour légère de la barre de niveau |
 
@@ -120,7 +124,7 @@ Prévoyez de tester **sur place, dans un chalet, avec l'opérateur de chaque cou
 - **L'app doit rester au premier plan sur le téléphone du chalet**, écran allumé. iOS et Android coupent le micro d'un onglet en arrière-plan. Le wake lock empêche la mise en veille (une pastille ⚠️ s'affiche s'il n'est pas disponible, notamment avant iOS 16.4 — désactivez alors le verrouillage automatique), mais si quelqu'un verrouille l'écran, le chalet passera « muet » au bout de 45 secondes — c'est voulu, on préfère une fausse alerte à un faux silence.
 - **Un appel entrant** sur le téléphone du chalet interrompt le micro (surtout sur iPhone). D'où le mode « Ne pas déranger ».
 - **Les notifications d'une webapp fermée** sont peu fiables sur iPhone. Les récepteurs gardent la page ouverte dans la poche ; l'écran de la sono est là pour ça.
-- **Pas d'écoute en direct** (volontairement) : en réseau faible, un flux continu est la première chose qui casse. Le clip de 4 secondes répond à la question « il pleure vraiment ? ».
+- **Pas de flux continu** (volontairement) : en réseau faible, un flux permanent est la première chose qui casse. À la place, le bouton **« 🔊 Écouter »** demande au chalet d'enregistrer 10 secondes et de les renvoyer — une écoute à la demande, en quasi-direct, qui garde les mêmes propriétés réseau que le reste. Le chalet affiche qui écoute et le journal le trace.
 - Ce n'est **pas un dispositif médical ni de sécurité** : c'est un outil d'entraide entre parents pour une soirée, pas un remplacement de la surveillance.
 
 ## Pile technique
