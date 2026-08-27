@@ -66,7 +66,7 @@ pytest
 ## Le soir de la fête
 
 1. Avant la fête, ouvrez l'adresse de l'app sur le téléphone de chaque parent et ajoutez-la à l'écran d'accueil. Choisissez un code de soirée et donnez-le à tout le monde.
-2. Au coucher, sur le téléphone qui reste au chalet : **« Je reste au chalet »**, nom du chalet, prénoms des enfants, réglage de la sensibilité avec le vu-mètre (parler normalement doit rester sous le trait, un pleur doit le dépasser), puis **« Armer la veille »**.
+2. Au coucher, sur le téléphone qui reste au chalet : **« Je reste au chalet »**, nom du chalet, prénoms des enfants, réglage de la sensibilité avec la barre de niveau (parler normalement doit rester sous le trait, un pleur doit le dépasser), puis **« Allumer la veilleuse »**.
 3. Checklist affichée à l'écran : chargeur branché, mode « Ne pas déranger », écran allumé avec l'app au premier plan, et **un test en tapant dans les mains** — le conjoint doit voir le chalet sonner sur son téléphone avant de partir.
 4. Sur le téléphone qui va à la salle : **« Je vais à la salle »**, tapez sur **« Activer les alertes »** (nécessaire pour que le navigateur ait le droit de sonner et vibrer), choisissez « Mon chalet » dans la liste.
 5. Sur le PC de la sono : **« Écran de la sono »**, puis plein écran.
@@ -105,7 +105,7 @@ Un tour de ronde physique toutes les 30 à 45 minutes reste une bonne idée : l'
 | → | `{"type":"hello","role":"salle","name"}` | Récepteur : s'identifie |
 | → | `{"type":"ack","chalet_id","by"}` / `resolve` | Récepteur : j'y vais / c'est réglé |
 | ← | `{"type":"state", chalets:[…], events:[…], now}` | Serveur : état complet à chaque changement |
-| ← | `{"type":"level","chalet_id","level","battery","ts"}` | Serveur : mise à jour légère du vu-mètre |
+| ← | `{"type":"level","chalet_id","level","battery","ts"}` | Serveur : mise à jour légère de la barre de niveau |
 
 `GET /api/party/{code}` renvoie le même état ; `GET /api/health` pour la supervision.
 

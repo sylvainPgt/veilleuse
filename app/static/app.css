@@ -5,8 +5,8 @@
   --line: #2a2f40;
   --text: #eef0f6;
   --muted: #9aa1b5;
-  --amber: #f5b342;
-  --amber-2: #ffd27a;
+  --amber: #ffd633;
+  --amber-2: #ffe98a;
   --green: #45c98a;
   --orange: #ff9d3b;
   --red: #ff4d5e;
@@ -24,7 +24,7 @@ small, .hint { color: var(--muted); font-size: .85rem; }
 
 .view { max-width: 720px; margin: 0 auto; padding: 1.2rem 1rem 3rem; }
 .hero { text-align: center; padding: 2rem 0 1rem; }
-.logo { width: 84px; height: 84px; filter: drop-shadow(0 8px 24px rgba(245,179,66,.35)); }
+.logo { width: 84px; height: 84px; filter: drop-shadow(0 8px 24px rgba(255,214,51,.35)); }
 .tagline { color: var(--muted); margin: .4rem auto 0; max-width: 420px; }
 .fine { text-align: center; color: var(--grey); font-size: .8rem; }
 .aide-link { color: var(--amber); }
@@ -84,7 +84,7 @@ input[type=range] { width: 100%; accent-color: var(--amber); }
 @keyframes blink { 50% { opacity: .35; } }
 
 /* Salle */
-.arm-card { border-color: rgba(245,179,66,.5); }
+.arm-card { border-color: rgba(255,214,51,.5); }
 .arm-card p { margin: 0; color: var(--muted); }
 .salle-own { margin: 1rem 0 .6rem; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .8rem; }
@@ -104,7 +104,7 @@ input[type=range] { width: 100%; accent-color: var(--amber); }
 .tile[data-status=alert], .tile[data-status=escalated] { border-color: var(--red); background: #2a1520; animation: pulse 1.2s infinite; }
 .tile[data-status=alert] .status, .tile[data-status=escalated] .status { color: var(--red); }
 .tile[data-status=escalated] { animation: pulse .5s infinite; }
-.tile[data-status=acked] { border-color: var(--amber); background: #2a2214; }
+.tile[data-status=acked] { border-color: var(--amber); background: #2b2a12; }
 .tile[data-status=acked] .status { color: var(--amber); }
 .tile[data-status=offline] { border-color: var(--grey); opacity: .8; }
 .tile[data-status=offline] .status { color: var(--grey); }
@@ -120,7 +120,7 @@ input[type=range] { width: 100%; accent-color: var(--amber); }
 
 /* Overlay d'alerte */
 .overlay { position: fixed; inset: 0; background: rgba(140,10,30,.96); display: flex; align-items: center; justify-content: center; z-index: 50; animation: flash 1s infinite; text-align: center; padding: 1rem; }
-.overlay.acked { background: rgba(120,80,0,.96); animation: none; }
+.overlay.acked { background: rgba(115,100,0,.96); animation: none; }
 @keyframes flash { 50% { background: rgba(255,60,80,.98); } }
 .overlay-kicker { font-size: 1.2rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; opacity: .85; }
 .overlay-name { font-size: clamp(2.6rem, 10vw, 7rem); font-weight: 900; line-height: 1.05; margin: .3rem 0; }

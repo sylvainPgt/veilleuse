@@ -185,7 +185,7 @@
       chalet.alerting = !!(me && me.alert);
       if (!detector.micAlive()) return; // l'écran « micro coupé » prime sur l'état serveur
       const st = $("run-status");
-      if (!me?.alert) { st.textContent = "Veille active"; st.className = "run-status"; $("run-msg").textContent = "Les parents sont prévenus dès qu'un bruit dépasse le seuil."; }
+      if (!me?.alert) { st.textContent = "Veilleuse allumée"; st.className = "run-status"; $("run-msg").textContent = "Les parents sont prévenus dès qu'un bruit dépasse le seuil."; }
       else if (me.alert.acked_by) { st.textContent = `${me.alert.acked_by} arrive`; st.className = "run-status alert"; $("run-msg").textContent = "Quelqu'un est en route."; }
       else { st.textContent = "Alerte envoyée"; st.className = "run-status alert"; $("run-msg").textContent = "Les téléphones de la salle sonnent."; }
     };
@@ -204,14 +204,14 @@
     if (state === "ended") detector.stop();
     const st = $("run-status");
     st.textContent = "Micro coupé !"; st.className = "run-status alert";
-    $("run-msg").textContent = "La veille est interrompue : le chalet va passer « muet » sur les téléphones de la salle. Réactivez le micro.";
+    $("run-msg").textContent = "La surveillance est interrompue : le chalet va passer « muet » sur les téléphones de la salle. Réactivez le micro.";
     $("btn-remic").classList.remove("hidden");
     if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
   }
 
   function setChaletIdleUi() {
     const st = $("run-status");
-    st.textContent = "Veille active"; st.className = "run-status";
+    st.textContent = "Veilleuse allumée"; st.className = "run-status";
     $("run-msg").textContent = "Les parents sont prévenus dès qu'un bruit dépasse le seuil.";
     $("btn-remic").classList.add("hidden");
   }
