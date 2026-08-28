@@ -22,6 +22,8 @@
 </head>
 <body>
 <section class="view admin">
+  <!-- En app installée il n'y a pas de barre d'adresse : ce retour est le seul chemin. -->
+  <header class="bar"><a href="/" class="btn ghost small">‹ Retour à l'app</a></header>
   <h1>Administration</h1>
   <p class="hint">Les soirées expirent seules&nbsp;: 15&nbsp;minutes si elles restent vides, 24&nbsp;heures sans activité sinon. Cette page ne sert qu'à forcer la suppression.</p>
 
@@ -59,6 +61,7 @@
 
   async function load() {
     const r = await call("/api/admin/parties");
+    if (r.status === 429) { return toast("Trop d'essais. Réessayez dans cinq minutes.", 6000); }
     if (r.status === 403) { token = ""; sessionStorage.removeItem("veilleuse.admin"); $("panel").classList.add("hidden"); $("auth").classList.remove("hidden"); return toast("Jeton refusé", 4000); }
     const { parties } = await r.json();
     $("auth").classList.add("hidden"); $("panel").classList.remove("hidden");

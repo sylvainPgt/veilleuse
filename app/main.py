@@ -441,15 +441,38 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
 
 
 # --- Administration ----------------------------------------------------------
-def admin_ok(request: Request) -> bool:
+ADMIN_MAX_TRIES = 8               # essais ratés tolérés…
+ADMIN_WINDOW = 300.0              # …sur cinq minutes glissantes
+_admin_fails: dict[str, list[float]] = {}
+
+
+def admin_blocked(ip: str) -> bool:
+    """La page est désormais accessible depuis l'app : sans ce frein, on pourrait
+    essayer des milliers de jetons à la suite."""
+    t = now()
+    tries = [ts for ts in _admin_fails.get(ip, []) if t - ts < ADMIN_WINDOW]
+    _admin_fails[ip] = tries
+    return len(tries) >= ADMIN_MAX_TRIES
+
+
+def admin_guard(request: Request) -> JSONResponse | None:
+    """None si l'accès est accordé, sinon la réponse à renvoyer."""
+    ip = request.client.host if request.client else "?"
+    if admin_blocked(ip):
+        return JSONResponse({"error": "too many attempts"}, status_code=429)
     token = request.headers.get("x-admin-token", "")
-    return bool(ADMIN_TOKEN) and secrets.compare_digest(token, ADMIN_TOKEN)
+    if ADMIN_TOKEN and secrets.compare_digest(token, ADMIN_TOKEN):
+        _admin_fails.pop(ip, None)
+        return None
+    _admin_fails.setdefault(ip, []).append(now())
+    log.warning("essai d'administration refusé depuis %s", ip)
+    return JSONResponse({"error": "forbidden"}, status_code=403)
 
 
 @app.get("/api/admin/parties")
 async def admin_parties(request: Request):
-    if not admin_ok(request):
-        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if (refus := admin_guard(request)) is not None:
+        return refus
     t = now()
     return {"parties": sorted((
         {"code": p.code, "name": p.name, "chalets": len(p.chalets),
@@ -459,8 +482,8 @@ async def admin_parties(request: Request):
 
 @app.delete("/api/admin/party/{code}")
 async def admin_delete(request: Request, code: str):
-    if not admin_ok(request):
-        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if (refus := admin_guard(request)) is not None:
+        return refus
     party = parties.pop(slug(code), None)
     if party is None:
         return JSONResponse({"error": "unknown party"}, status_code=404)

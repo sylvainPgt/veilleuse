@@ -44,6 +44,8 @@ small, .hint { color: var(--muted); font-size: var(--t-sm); font-weight: 400; }
 .fine { text-align: center; color: var(--grey); font-size: var(--t-xs); line-height: 1.7; }
 /* Qualifié par a : sinon .btn (inline-flex) gagne et les marges auto ne centrent plus. */
 a.aide-link { color: var(--amber); display: flex; width: fit-content; margin: var(--s3) auto 0; }
+/* Discret : utile à l'organisateur, sans inviter les invités à essayer. */
+.admin-link { color: var(--grey); font-size: var(--t-xs); text-decoration: none; border-bottom: 1px solid var(--line); }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s4); margin-top: var(--s4); }
 label { display: flex; flex-direction: column; gap: var(--s2); font-weight: 600; font-size: var(--t-sm); }

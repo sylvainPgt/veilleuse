@@ -126,6 +126,20 @@ def test_admin_requires_token(monkeypatch):
     assert party.code not in main.parties
 
 
+def test_admin_brute_force_is_throttled(monkeypatch):
+    """La page est atteignable depuis l'app : on ne laisse pas essayer sans fin."""
+    client = TestClient(app)
+    monkeypatch.setattr(main, "ADMIN_TOKEN", "s3cret")
+    main._admin_fails.clear()
+    for _ in range(main.ADMIN_MAX_TRIES):
+        assert client.get("/api/admin/parties", headers={"X-Admin-Token": "faux"}).status_code == 403
+    assert client.get("/api/admin/parties", headers={"X-Admin-Token": "faux"}).status_code == 429
+    # le bon jeton est refusé aussi tant que le verrou tient
+    assert client.get("/api/admin/parties", headers={"X-Admin-Token": "s3cret"}).status_code == 429
+    main._admin_fails.clear()
+    assert client.get("/api/admin/parties", headers={"X-Admin-Token": "s3cret"}).status_code == 200
+
+
 def test_websocket_flow():
     with TestClient(app) as client:  # un seul portail : les deux sockets partagent la boucle
         code = main.create_party("fête").code
