@@ -231,6 +231,9 @@
       if (m.type !== "state") return;
       const me = m.chalets.find((c) => c.id === chalet.id);
       chalet.alerting = !!(me && me.alert);
+      // Celui qui est dans le chalet sait mieux que personne qu'une alerte est fausse
+      // (test du clap, parent encore dans la chambre) : il peut l'éteindre d'ici.
+      $("btn-cancel").classList.toggle("hidden", !chalet.alerting);
       if (!detector.micAlive()) return; // l'écran « micro coupé » prime sur l'état serveur
       const st = $("run-status");
       if (!me?.alert) { st.textContent = "Veilleuse allumée"; st.className = "run-status"; $("run-msg").textContent = "Les parents sont prévenus dès qu'un bruit dépasse le seuil."; }
@@ -310,7 +313,12 @@
     setTimeout(() => $("run-listen").classList.add("hidden"), 3000);
   }
 
-  $("btn-test").addEventListener("click", () => { net.send({ type: "test", chalet_id: chalet.id }); toast("Alerte de test envoyée"); });
+  $("btn-test").addEventListener("click", () => { net.send({ type: "test", chalet_id: chalet.id }); toast("Alerte de test envoyée — « Fausse alerte » pour l'arrêter"); });
+  $("btn-cancel").addEventListener("click", () => {
+    net.send({ type: "resolve", chalet_id: chalet.id, by: "le chalet" });
+    $("btn-cancel").classList.add("hidden");
+    toast("Alerte annulée, les téléphones de la salle sont rassurés");
+  });
   $("btn-stop").addEventListener("click", () => { clearInterval(chalet.hbTimer); stopEverything(); show("home"); });
 
   // ============================================================

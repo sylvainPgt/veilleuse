@@ -133,7 +133,7 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 .run-chalet { font-size: var(--t-xl); font-weight: 800; margin: var(--s1) 0 0; }
 .run-kids { color: var(--muted); margin-bottom: var(--s5); }
 .run-msg { color: var(--muted); margin-top: var(--s4); font-size: var(--t-sm); }
-#btn-remic { margin-top: var(--s4); }
+#btn-remic, #btn-cancel { margin-top: var(--s4); }
 .run-listen { margin-top: var(--s4); font-weight: 700; color: var(--amber); animation: blink 1.4s infinite; }
 .checklist ul { margin: 0; padding-left: 0; list-style: none; color: var(--muted); display: flex; flex-direction: column; gap: var(--s3); }
 .checklist li { display: flex; align-items: flex-start; gap: var(--s3); line-height: 1.4; }
