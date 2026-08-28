@@ -321,8 +321,13 @@
     salle.audio = new (window.AudioContext || window.webkitAudioContext)();
     await salle.audio.resume();
     beep("soft"); navigator.vibrate?.(100);
-    try { if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission(); } catch { /* ignore */ }
-    salle.armed = true; $("salle-armed").classList.add("hidden"); toast("Alertes activées sur ce téléphone");
+    let perm = "none";
+    try { if ("Notification" in window) perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission; } catch { /* ignore */ }
+    salle.armed = true; $("salle-armed").classList.add("hidden");
+    // Dire tout de suite ce qui marchera : personne ne doit le découvrir à la première alerte.
+    toast(perm === "granted"
+      ? "Alertes activées : ce téléphone sonnera, vibrera et affichera une notification même écran éteint."
+      : "Alertes sonores activées. Sans l'autorisation de notifier, gardez cette page ouverte à l'écran.", 6000);
   });
   $("btn-fullscreen").addEventListener("click", () => { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {}); });
   $("sel-own").addEventListener("change", (e) => { salle.ownId = e.target.value; store.set("own", salle.ownId); renderTiles(); });
@@ -363,11 +368,15 @@
   function notify(c, strength, kicker) {
     if (salle.armed) { beep(strength); navigator.vibrate?.(strength === "strong" ? [400, 150, 400, 150, 800] : [200, 100, 200]); }
     showOverlay(c, kicker);
-    try {
-      if ("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible") {
-        new Notification(`${kicker} — ${c.name}`, { body: c.kids || "", tag: "veilleuse-" + c.id, renotify: true, vibrate: [300, 100, 300] });
-      }
-    } catch { /* ignore */ }
+    if (!("Notification" in window) || Notification.permission !== "granted" || document.visibilityState === "visible") return;
+    const title = `${kicker} — ${c.name}`;
+    const opts = { body: c.kids || "", tag: "veilleuse-" + c.id, renotify: true, vibrate: [400, 150, 400, 150, 800],
+                   icon: "/static/icon-192.png", badge: "/static/icon-192.png" };
+    // Android n'accepte que la voie du service worker : new Notification() y lève
+    // « Illegal constructor » — d'où des notifications qui marchaient partout sauf sur téléphone.
+    navigator.serviceWorker?.getRegistration()
+      .then((reg) => reg?.showNotification ? reg.showNotification(title, opts) : new Notification(title, opts))
+      .catch(() => { try { new Notification(title, opts); } catch { /* tant pis */ } });
   }
 
   // Rappel périodique tant qu'une alerte n'est pas acquittée (plus fort si c'est la mienne ou si escalade)
