@@ -39,6 +39,11 @@
       const mine = () => gen === this.gen;
       ws.onopen = () => {
         if (!mine()) return ws.close();
+        // Nouvelle socket = nouveau compteur : après un redémarrage le serveur repart
+        // à rev=1, et un lastRev hérité ferait ignorer tous les états. Le garde `gen`
+        // suffit contre les messages d'une ancienne socket ; la révision ne protège
+        // que l'ordre au sein de la connexion en cours.
+        this.lastRev = 0;
         this.open = true; this.backoff = 1000; this.lastMsgAt = Date.now();
         // register/hello d'abord : un heartbeat parti avant serait ignoré par le
         // serveur et le chalet resterait « jamais connecté » quinze secondes.
