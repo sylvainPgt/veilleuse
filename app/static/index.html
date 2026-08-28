@@ -161,7 +161,7 @@
       <li><svg class="ic"><use href="#i-plug"/></svg> Téléphone branché au chargeur</li>
       <li><svg class="ic"><use href="#i-moon"/></svg> Mode « Ne pas déranger » activé</li>
       <li><svg class="ic"><use href="#i-sun"/></svg> Écran allumé, cette page au premier plan</li>
-      <li><svg class="ic"><use href="#i-hand"/></svg> Tapez dans les mains : votre conjoint doit voir le chalet sonner</li>
+      <li><svg class="ic"><use href="#i-hand"/></svg> Tapez dans les mains : votre conjoint doit taper « J'y vais » — cet écran affichera alors son prénom. Pas de prénom, pas de preuve.</li>
     </ul>
   </div>
   <div class="run-actions">
@@ -178,7 +178,7 @@
     <div id="salle-conn" class="pill">connexion…</div>
   </header>
   <div id="salle-armed" class="card arm-card">
-    <p>Pour sonner, vibrer et afficher une notification malgré la musique, ce téléphone doit être « réveillé » une fois. Acceptez la demande de notifications qui suivra.</p>
+    <p>Pour sonner et vibrer malgré la musique, ce téléphone doit être « réveillé » une fois — acceptez la demande de notifications qui suivra. Gardez ensuite cette page ouverte : un téléphone verrouillé au fond d'une poche peut rater une alerte, c'est l'écran de la sono qui couvre tout le monde.</p>
     <button id="btn-arm" class="btn primary"><svg class="ic"><use href="#i-bell"/></svg> Activer les alertes sur ce téléphone</button>
   </div>
   <div class="own-picker">
@@ -191,8 +191,15 @@
   <button id="btn-fullscreen" class="btn ghost small fs"><svg class="ic"><use href="#i-expand"/></svg> Plein écran</button>
 </section>
 
+<!-- Perte de connexion : une vieille tuile verte ne doit jamais rassurer à tort -->
+<div id="conn-lost" class="conn-lost hidden" role="alert">
+  <svg class="ic"><use href="#i-warn"/></svg>
+  <div><strong>Connexion au serveur perdue</strong><br>
+  <span>Les tuiles affichent le dernier état connu, plus la réalité. Vérifiez le réseau, ou envoyez quelqu'un aux chalets.</span></div>
+</div>
+
 <!-- Overlay d'alerte (salle + sono) -->
-<div id="overlay" class="overlay hidden">
+<div id="overlay" class="overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="ov-name">
   <div class="overlay-inner">
     <div class="overlay-kicker" id="ov-kicker">Ça sonne</div>
     <div class="overlay-name" id="ov-name"></div>
@@ -206,7 +213,7 @@
   </div>
 </div>
 
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="assertive"></div>
 <audio id="clip-player" hidden></audio>
 <script src="/static/app.js"></script>
 </body>

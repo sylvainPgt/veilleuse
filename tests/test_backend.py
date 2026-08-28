@@ -126,6 +126,84 @@ def test_unknown_party_is_refused_on_websocket():
     assert "nexiste-pas-abcdefghij" not in main.parties  # et rien n'a été créé au passage
 
 
+def test_signed_link_survives_restart():
+    """Revue externe, bloquant n°4 : chaque déploiement redémarre le serveur,
+    le lien partagé doit recréer la soirée pour que les chalets reviennent."""
+    party = main.create_party("Les 40 ans de Silou")
+    code = party.code
+    parties.clear()                                   # « redémarrage »
+    revived = main.get_party(code)
+    assert revived is not None and revived.code == code
+    assert revived.name == "les 40 ans de silou"      # nom retrouvé depuis le lien
+    # un identifiant forgé, même bien formé, reste refusé
+    forged = code[:-1] + ("a" if code[-1] != "a" else "b")
+    parties.clear()
+    assert main.get_party(forged) is None
+
+
+def test_first_ack_wins():
+    """Revue externe n°7 : deux « J'y vais » simultanés, le premier reste."""
+    p = Party("test")
+    c = p.register_chalet("m", "M", "")
+    p.raise_alert(c, 80, None)
+    p.ack(c, "Marie")
+    p.ack(c, "Paul")
+    assert c.alert["acked_by"] == "Marie"
+    assert sum(e["kind"] == "ack" for e in p.events) == 1
+
+
+def test_late_clip_does_not_resurrect_alert():
+    """Revue externe n°6 : le clip arrive après « C'est réglé » → poubelle."""
+    p = Party("test")
+    c = p.register_chalet("m", "M", "")
+    p.raise_alert(c, 80, None)
+    p.resolve(c, "Marie")
+    p.attach_alert_clip(c, "data:audio/mp4;base64,AAAA")
+    assert c.alert is None
+
+
+def test_alert_clip_expires_like_the_rest():
+    """Revue externe n°13 : le clip d'une alerte jamais réglée s'efface aussi."""
+    p = Party("test")
+    c = p.register_chalet("m", "M", "")
+    p.heartbeat(c, 5, None, None)
+    p.raise_alert(c, 80, "data:audio/mp4;base64,AAAA")
+    c.alert["clip_ts"] -= main.CLIP_TTL + 1
+    assert p.watchdog()
+    assert c.alert is not None and c.alert["clip"] is None   # l'alerte reste, le son part
+
+
+def test_receiver_cannot_forge_emitter_messages():
+    """Revue externe n°12 : avec le lien, un récepteur ne fabrique ni alerte ni heartbeat."""
+    with TestClient(app) as client:
+        code = main.create_party("rôles").code
+        with client.websocket_connect(f"/ws/{code}") as emitter, client.websocket_connect(f"/ws/{code}") as intrus:
+            recv_until(emitter, "state"); recv_until(intrus, "state")
+            emitter.send_json({"type": "register", "chalet_id": "m", "name": "Mésange", "kids": ""})
+            recv_until(emitter, "registered")
+            chalet = main.parties[code].chalets["m"]
+
+            intrus.send_json({"type": "hello", "role": "salle", "name": "Intrus"})
+            intrus.send_json({"type": "alert", "chalet_id": "m", "level": 99})
+            intrus.send_json({"type": "hb", "chalet_id": "m", "level": 1})
+            intrus.send_json({"type": "test", "chalet_id": "m"})
+            intrus.send_json({"type": "ack", "chalet_id": "m"})    # légitime, même sans alerte
+            intrus.send_json({"type": "ping"})
+            recv_until(intrus, "pong", limit=12)                   # tout ce qui précède a été traité
+            assert chalet.alert is None and chalet.online is False
+
+            # l'émetteur, lui, alerte normalement
+            emitter.send_json({"type": "alert", "chalet_id": "m", "level": 90})
+            emitter.send_json({"type": "ping"}); recv_until(emitter, "pong", limit=12)
+            assert chalet.alert is not None
+
+
+def test_state_revision_is_monotonic():
+    p = Party("test")
+    revs = [p.snapshot()["rev"] for _ in range(3)]
+    assert revs == sorted(revs) and len(set(revs)) == 3
+
+
 def test_admin_requires_token(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr(main, "ADMIN_TOKEN", "")

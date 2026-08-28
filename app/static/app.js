@@ -27,26 +27,40 @@
 
   // ---------- connexion WebSocket robuste (reconnexion + file hors ligne) ----------
   const net = {
-    ws: null, queue: [], backoff: 1000, onState: null, onMessage: null, onConn: null, onUnknown: null, open: false, hello: null, timer: null,
+    ws: null, queue: [], backoff: 1000, onState: null, onMessage: null, onConn: null, onUnknown: null,
+    open: false, hello: null, timer: null, gen: 0, lastMsgAt: 0, lastRev: 0,
     connect() {
       clearTimeout(this.timer);
+      const gen = ++this.gen;   // toute socket d'une génération passée est ignorée
       const proto = location.protocol === "https:" ? "wss" : "ws";
       let ws;
       try { ws = new WebSocket(`${proto}://${location.host}/ws/${encodeURIComponent(session.code)}`); } catch { return this.retry(); }
       this.ws = ws;
+      const mine = () => gen === this.gen;
       ws.onopen = () => {
-        this.open = true; this.backoff = 1000; this.onConn?.(true);
+        if (!mine()) return ws.close();
+        this.open = true; this.backoff = 1000; this.lastMsgAt = Date.now();
+        // register/hello d'abord : un heartbeat parti avant serait ignoré par le
+        // serveur et le chalet resterait « jamais connecté » quinze secondes.
         if (this.hello) ws.send(JSON.stringify(this.hello));
+        this.onConn?.(true);
         // rejoue ce qui n'a pas pu partir (alertes en priorité, on garde l'ordre)
         const q = this.queue.splice(0); q.forEach((m) => ws.send(JSON.stringify(m)));
         if (q.length) toast(`Connexion rétablie, ${q.length} message(s) renvoyé(s)`);
       };
       ws.onmessage = (e) => {
+        if (!mine()) return;
         let m; try { m = JSON.parse(e.data); } catch { return; }
+        this.lastMsgAt = Date.now();
         if (m.type === "unknown_party") return this.onUnknown?.();
+        // deux diffusions peuvent se chevaucher : on n'affiche jamais un état plus vieux
+        if (m.type === "state" && m.rev) {
+          if (m.rev <= this.lastRev) return;
+          this.lastRev = m.rev;
+        }
         this.onMessage?.(m);
       };
-      ws.onclose = () => { this.open = false; this.onConn?.(false); this.retry(); };
+      ws.onclose = () => { if (!mine()) return; this.open = false; this.onConn?.(false); this.retry(); };
       ws.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
     },
     retry() { this.timer = setTimeout(() => this.connect(), this.backoff); this.backoff = Math.min(this.backoff * 1.7, 15000); },
@@ -55,7 +69,15 @@
       if (queueIfOffline) { this.queue.push(msg); if (this.queue.length > 50) this.queue.splice(0, this.queue.length - 50); }
       return false;
     },
-    close() { clearTimeout(this.timer); this.onConn = null; this.onMessage = null; try { this.ws?.close(); } catch { /* ignore */ } this.open = false; },
+    close() {
+      // Fermeture voulue (éteindre, changer de soirée) : incrémenter la génération
+      // rend l'ancienne socket muette — sans ça, son onclose relançait une
+      // reconnexion fantôme qui ré-enregistrait le chalet dans l'ancienne soirée.
+      this.gen++; clearTimeout(this.timer);
+      this.onConn = null; this.onMessage = null; this.onUnknown = null;
+      this.queue.length = 0; this.hello = null; this.lastRev = 0;
+      try { this.ws?.close(); } catch { /* ignore */ } this.open = false;
+    },
   };
   setInterval(() => { if (net.open) net.send({ type: "ping" }, { queueIfOffline: false }); }, 25000);
 
@@ -64,7 +86,12 @@
   async function keepAwake() {
     try { wakeLock = await navigator.wakeLock?.request("screen"); return !!wakeLock; } catch { return false; }
   }
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && wakeLock !== null) keepAwake(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (wakeLock !== null) keepAwake();
+    // Retour au premier plan : Safari peut avoir suspendu l'AudioContext en douce.
+    if (detector.ctx && detector.ctx.state === "suspended") detector.ctx.resume().catch(() => {});
+  });
 
   // ---------- accueil ----------
   $("in-name").value = store.get("name", "");
@@ -111,7 +138,10 @@
   document.querySelectorAll("#form-home [data-role]").forEach((b) => b.addEventListener("click", () => {
     chosenRole = b.dataset.role;
     const step = ROLE_STEP[chosenRole];
-    document.querySelectorAll("#form-home [data-role]").forEach((o) => o.classList.toggle("selected", o === b));
+    document.querySelectorAll("#form-home [data-role]").forEach((o) => {
+      o.classList.toggle("selected", o === b);
+      o.setAttribute("aria-pressed", o === b ? "true" : "false");
+    });
     $("home-role-label").textContent = step.label;
     $("lab-name").classList.toggle("hidden", !step.name);
     $("in-name").required = step.name;              // sinon un champ caché bloque l'envoi
@@ -140,7 +170,13 @@
   });
 
   $("btn-forget-all").addEventListener("click", () => {
-    recent.clear(); loadParties(); toast("Historique effacé sur ce téléphone");
+    // « Tout oublier » oublie tout : soirées, prénom, réglages du chalet — pas
+    // seulement la liste. Une promesse d'effacement partielle n'en est pas une.
+    try {
+      Object.keys(localStorage).filter((k) => k.startsWith("veilleuse.")).forEach((k) => localStorage.removeItem(k));
+    } catch { /* stockage indisponible */ }
+    $("in-name").value = "";
+    loadParties(); toast("Tout est effacé sur ce téléphone");
   });
 
   // Créer ou rejoindre : deux chemins, un seul écran.
@@ -227,9 +263,15 @@
   // ============================================================
   const detector = {
     ctx: null, analyser: null, stream: null, raf: null, buf: null, level: 0, onLevel: null, onMicState: null, recorder: null,
+    lastSampleAt: 0,
     micAlive() {
+      // La piste peut sembler « live » alors que l'analyse ne tourne plus (onglet en
+      // arrière-plan, AudioContext suspendu) : on exige aussi un échantillon récent.
+      // Sans ça, on enverrait « tout va bien » sans plus rien écouter — un faux silence.
       const t = this.stream?.getAudioTracks()[0];
-      return !!t && t.readyState === "live" && !t.muted;
+      return !!t && t.readyState === "live" && !t.muted
+        && this.ctx?.state === "running"
+        && performance.now() - this.lastSampleAt < 5000;
     },
     async start() {
       if (this.stream) {
@@ -251,6 +293,7 @@
       src.connect(this.analyser);
       this.buf = new Float32Array(this.analyser.fftSize);
       const loop = () => {
+        this.lastSampleAt = performance.now();
         this.analyser.getFloatTimeDomainData(this.buf);
         let sum = 0; for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
         const rms = Math.sqrt(sum / this.buf.length);
@@ -312,8 +355,12 @@
     e.preventDefault();
     if (!(await detector.start())) return;
     chalet.name = $("in-chalet").value.trim(); chalet.kids = $("in-kids").value.trim(); chalet.threshold = +$("in-threshold").value;
-    chalet.id = slug(chalet.name);
-    store.set("chalet", { name: chalet.name, kids: chalet.kids, threshold: chalet.threshold });
+    // Identifiant propre à CE téléphone, pas dérivé du nom : deux familles qui
+    // écrivent toutes deux « Chalet 4 » ne doivent pas fusionner leurs chalets —
+    // l'une croirait sa chambre surveillée par le téléphone de l'autre.
+    const saved = store.get("chalet", {});
+    chalet.id = saved.deviceId || slug(chalet.name).slice(0, 30) + "-" + Math.random().toString(36).slice(2, 6);
+    store.set("chalet", { deviceId: chalet.id, name: chalet.name, kids: chalet.kids, threshold: chalet.threshold });
     startChaletRun();
   });
 
@@ -350,6 +397,23 @@
     detector.onLevel = onChaletLevel;
     detector.onMicState = onMicState;
     chalet.hbTimer = setInterval(sendHeartbeat, 15000);
+    chalet.connTimer = setInterval(chaletConnCheck, 3000);
+  }
+
+  // Coupure durable côté chalet : le dire en grand, pas dans une pastille.
+  let chaletLostSince = 0;
+  function chaletConnCheck() {
+    const fresh = net.open && net.lastMsgAt && Date.now() - net.lastMsgAt < 40000;
+    if (fresh) {
+      if (chaletLostSince && detector.micAlive() && !chalet.alerting) setChaletIdleUi();
+      chaletLostSince = 0;
+      return;
+    }
+    if (!chaletLostSince) { chaletLostSince = Date.now(); return; }
+    if (Date.now() - chaletLostSince < 15000 || !detector.micAlive()) return;  // l'écran « micro coupé » prime
+    const st = $("run-status");
+    st.textContent = "Connexion perdue"; st.className = "run-status alert";
+    $("run-msg").textContent = "Le chalet apparaît « muet » sur les téléphones de la salle. La détection continue ici et les alertes partiront à la reconnexion.";
   }
 
   // Micro perdu (appel entrant, verrouillage…) : on prévient ici et on cesse d'envoyer des
@@ -405,7 +469,8 @@
     net.send({ type: "alert", chalet_id: chalet.id, level, reason });          // d'abord l'alerte, minuscule
     if (navigator.vibrate) navigator.vibrate(50);
     const clip = await detector.recordClip(4000);                            // puis le clip si possible
-    if (clip) net.send({ type: "alert", chalet_id: chalet.id, level, reason, clip }, { queueIfOffline: false });
+    // message dédié : s'il arrive après « C'est réglé », il ne doit pas ressusciter l'alerte
+    if (clip) net.send({ type: "alert_clip", chalet_id: chalet.id, clip }, { queueIfOffline: false });
   }
   // Quelqu'un de la salle demande à entendre ce qui se passe : on enregistre et on renvoie.
   async function serveClipRequest(m) {
@@ -424,7 +489,7 @@
     $("btn-cancel").classList.add("hidden");
     toast("Alerte annulée, les téléphones de la salle sont rassurés");
   });
-  $("btn-stop").addEventListener("click", () => { clearInterval(chalet.hbTimer); stopEverything(); show("home"); });
+  $("btn-stop").addEventListener("click", () => { clearInterval(chalet.hbTimer); clearInterval(chalet.connTimer); chaletLostSince = 0; stopEverything(); show("home"); });
 
   // ============================================================
   //  RÉCEPTEUR (salle) & ÉCRAN SONO
@@ -458,10 +523,11 @@
     let perm = "none";
     try { if ("Notification" in window) perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission; } catch { /* ignore */ }
     salle.armed = true; $("salle-armed").classList.add("hidden");
-    // Dire tout de suite ce qui marchera : personne ne doit le découvrir à la première alerte.
+    // Dire la vérité : la sonnerie vient de cette page. Suspendue par le téléphone,
+    // elle ne peut plus rien promettre — la notification est un filet, pas une garantie.
     toast(perm === "granted"
-      ? "Alertes activées : ce téléphone sonnera, vibrera et affichera une notification même écran éteint."
-      : "Alertes sonores activées. Sans l'autorisation de notifier, gardez cette page ouverte à l'écran.", 6000);
+      ? "Alertes activées. Gardez cette page ouverte : c'est elle qui sonne. Écran éteint, une notification tentera de vous prévenir, sans garantie — l'écran de la sono reste le filet de sécurité."
+      : "Alertes sonores activées. Notifications refusées : gardez cette page ouverte et l'écran allumé pour être prévenu.", 8000);
   });
   $("btn-fullscreen").addEventListener("click", () => { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {}); });
   $("sel-own").addEventListener("change", (e) => { salle.ownId = e.target.value; store.set("own", salle.ownId); renderTiles(); });
@@ -523,6 +589,7 @@
   // Rappel périodique tant qu'une alerte n'est pas acquittée (plus fort si c'est la mienne ou si escalade)
   function remind() {
     if (!salle.state || !salle.armed) return;
+    if (connLostSince && Date.now() - connLostSince > 10000) { beep("soft"); return; }
     const pending = salle.state.chalets.filter((c) => c.status === "alert" || c.status === "escalated");
     if (!pending.length) return;
     const strong = pending.some((c) => c.status === "escalated" || c.id === salle.ownId);
@@ -543,6 +610,7 @@
     $("ov-kicker").textContent = kicker; $("ov-name").textContent = c.name; $("ov-name").dataset.id = c.id; $("ov-kids").textContent = c.kids || "";
     $("overlay").classList.remove("hidden"); $("overlay").classList.toggle("acked", c.status === "acked");
     $("ov-listen").classList.toggle("hidden", c.status === "offline");
+    try { if (!isSono) $("ov-ack").focus(); } catch { /* sono : actions masquées */ }
     renderOverlaySince();
   }
 
@@ -565,13 +633,28 @@
   const resolve = (id) => net.send({ type: "resolve", chalet_id: id, by: session.name });
 
   function renderOwnSelect() {
+    // Sans « mon chalet » choisi, les alertes de sa propre famille restent douces :
+    // le rappel reste visible tant que le choix n'est pas fait.
+    document.querySelector(".own-picker")?.classList.toggle("todo", !salle.ownId && salle.state?.chalets.length > 0);
     const sel = $("sel-own"); const cur = salle.ownId;
     const opts = ['<option value="">— aucun / je veille sur tous —</option>'].concat(salle.state.chalets.map((c) => `<option value="${esc(c.id)}"${c.id === cur ? " selected" : ""}>${esc(c.name)}</option>`));
     if (sel.innerHTML !== opts.join("")) sel.innerHTML = opts.join("");
   }
 
+  // Un état qui a plus de 40 s (ping/pong compris) n'est plus un état, c'est un souvenir.
+  let connLostSince = 0;
+  function checkFreshness() {
+    const fresh = net.open && net.lastMsgAt && Date.now() - net.lastMsgAt < 40000;
+    if (fresh) connLostSince = 0;
+    else if (!connLostSince) connLostSince = Date.now();
+    const lost = connLostSince && Date.now() - connLostSince > 10000;
+    $("conn-lost").classList.toggle("hidden", !lost);
+    return lost;
+  }
+
   const STATUS_LABEL = { ok: "Tout va bien", noise: "Un bruit…", alert: "Ça sonne !", escalated: "Personne n'a répondu !", acked: "Quelqu'un y va", offline: "Chalet muet" };
   function renderTiles() {
+    if (session.role === "salle") checkFreshness();
     if (!salle.state) return;
     const now = Date.now() / 1000 + salle.serverOffset;
     const chalets = [...salle.state.chalets].sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
@@ -582,6 +665,8 @@
       if (a) {
         line = a.acked_by ? `${esc(a.acked_by)} y va (depuis ${fmtAgo(now - a.acked_at)})` : `sonne depuis ${fmtAgo(now - a.started)}`;
         if (a.reason === "test") line = "test · " + line;
+        // une alerte ne doit pas masquer que le babyphone lui-même s'est tu
+        if (!c.online) line = `⚠ chalet muet pendant l'alerte · ${line}`;
       } else if (c.status === "offline") line = c.last_hb ? `plus de nouvelles depuis ${fmtAgo(now - c.last_hb)}` : "jamais connecté";
       // Écouter = demander du frais. Réécouter = rejouer le dernier reçu (aussi le
       // repli quand iOS refuse la lecture automatique faute de geste utilisateur.)

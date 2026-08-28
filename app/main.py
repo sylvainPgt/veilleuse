@@ -9,6 +9,8 @@ reconnexion, donc un redémarrage du serveur n'est pas dramatique.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -41,22 +43,61 @@ MAX_CLIP_BYTES = 200_000  # clip audio base64, on refuse au-delà pour protéger
 
 ADMIN_TOKEN = os.getenv("VEILLEUSE_ADMIN_TOKEN", "")                        # vide = page d'admin désactivée
 
+# Signe les identifiants de soirée pour qu'un lien survive à un redémarrage du
+# serveur (chaque déploiement en est un). Sans la variable, un secret est tiré au
+# démarrage : tout marche, mais les liens meurent avec le processus.
+SECRET = os.getenv("VEILLEUSE_SECRET", "") or secrets.token_hex(32)
+if not os.getenv("VEILLEUSE_SECRET"):
+    log.warning("VEILLEUSE_SECRET absent : les liens de soirée ne survivront pas à un redémarrage")
+
+# Garde-fous contre l'épuisement mémoire : la création de soirée est publique.
+MAX_PARTIES = int(os.getenv("VEILLEUSE_MAX_PARTIES", "300"))
+MAX_CHALETS = int(os.getenv("VEILLEUSE_MAX_CHALETS", "40"))
+MAX_SOCKETS = int(os.getenv("VEILLEUSE_MAX_SOCKETS", "150"))               # par soirée
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 # Sans i, l, o, 0, 1 : un identifiant qu'on peut relire à voix haute sans se tromper.
 ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 
 
+SIG_LEN = 8
+
+
+def _sign(base: str) -> str:
+    digest = hmac.new(SECRET.encode(), base.encode(), hashlib.sha256).digest()
+    return "".join(ID_ALPHABET[b % len(ID_ALPHABET)] for b in digest[:SIG_LEN])
+
+
 def new_party_id(name: str) -> str:
-    """Nom lisible + suffixe imprévisible. C'est ce suffixe qui protège la soirée :
-    on ne devine pas « anniv-sylvain-k3f9x2qa » en tapant « anniv-sylvain ».
+    """Nom lisible + suffixe imprévisible + signature. Le suffixe protège la soirée
+    (on ne devine pas « anniv-sylvain-k3f9x2qa »), la signature la fait survivre à
+    un redémarrage : le serveur reconnaît ses propres liens sans rien stocker.
 
     L'identifiant doit être stable par slug() : sans le strip("-"), une troncature
     tombant sur un tiret donnait « ...version--abcd », que slug() ramenait ensuite à
     « ...version-abcd » — la soirée devenait alors introuvable.
     """
-    prefix = slug(name)[:24].strip("-")
-    return f"{prefix}-{''.join(secrets.choice(ID_ALPHABET) for _ in range(10))}"
+    # prefix(21) + "-" + hasard(10) + signature(8) = 40, la longueur maximale de slug() :
+    # l'identifiant reste ainsi stable par normalisation.
+    prefix = slug(name)[:21].strip("-")
+    base = f"{prefix}-{''.join(secrets.choice(ID_ALPHABET) for _ in range(10))}"
+    return base + _sign(base)
+
+
+def id_is_signed(code: str) -> bool:
+    """Vrai si ce code a été émis par ce serveur (avant ou après redémarrage)."""
+    if len(code) <= SIG_LEN:
+        return False
+    base, sig = code[:-SIG_LEN], code[-SIG_LEN:]
+    return hmac.compare_digest(_sign(base), sig)
+
+
+def name_from_id(code: str) -> str:
+    """Retrouve un nom présentable depuis l'identifiant, quand la mémoire est perdue."""
+    base = code[:-SIG_LEN]
+    prefix = re.sub(r"-[a-z2-9]{10}$", "", base)
+    return prefix.replace("-", " ") or "soirée"
 
 
 def now() -> float:
@@ -125,6 +166,7 @@ class Party:
         self.sockets: dict[WebSocket, dict[str, Any]] = {}
         self.created = now()
         self.last_activity = now()
+        self.rev = 0
 
     # -- événements / état ---------------------------------------------------
     def add_event(self, kind: str, chalet: Chalet | None = None, **extra: Any) -> dict[str, Any]:
@@ -135,8 +177,12 @@ class Party:
         return ev
 
     def snapshot(self) -> dict[str, Any]:
+        # Deux diffusions peuvent se chevaucher sur une socket lente : la révision
+        # permet au client d'ignorer un état plus vieux que le dernier affiché.
+        self.rev += 1
         return {
             "type": "state",
+            "rev": self.rev,
             "code": self.code,
             "name": self.name,
             "now": now(),
@@ -197,12 +243,23 @@ class Party:
             chalet.alert["last_noise"] = now()
             return
         chalet.alert = {"started": now(), "last_noise": now(), "acked_by": None, "acked_at": None,
-                        "escalated": False, "clip": clip, "level": chalet.level, "reason": reason}
+                        "escalated": False, "clip": clip, "clip_ts": now() if clip else None,
+                        "level": chalet.level, "reason": reason}
         self.add_event("alert", chalet, level=chalet.level, reason=reason)
+
+    def attach_alert_clip(self, chalet: Chalet, clip: str | None) -> None:
+        """Le clip arrive quelques secondes après l'alerte. S'il n'y a plus d'alerte
+        (déjà réglée), on le jette : il ne doit surtout pas en recréer une."""
+        if not chalet.alert or not clip or len(clip) > MAX_CLIP_BYTES:
+            return
+        chalet.alert["clip"] = clip
+        chalet.alert["clip_ts"] = now()
 
     def ack(self, chalet: Chalet, by: str) -> None:
         if not chalet.alert:
             return
+        if chalet.alert.get("acked_by"):
+            return  # le premier « J'y vais » gagne : deux personnes qui tapent en même temps ne doivent pas s'écraser
         chalet.alert["acked_by"] = by or "quelqu'un"
         chalet.alert["acked_at"] = now()
         chalet.alert["escalated"] = False
@@ -239,6 +296,11 @@ class Party:
             if chalet.clip and t - chalet.clip["ts"] > CLIP_TTL:
                 chalet.clip = None
                 changed = True
+            # même règle pour le clip d'une alerte qui traîne sans être réglée
+            a = chalet.alert
+            if a and a.get("clip") and t - (a.get("clip_ts") or a["started"]) > CLIP_TTL:
+                a["clip"] = a["clip_ts"] = None
+                changed = True
             a = chalet.alert
             if a and not a["acked_by"] and not a["escalated"] and t - a["started"] > ESCALATION_DELAY:
                 a["escalated"] = True
@@ -268,15 +330,24 @@ def cleanup_parties() -> bool:
 
 
 def get_party(code: str) -> Party | None:
-    """Ne crée plus rien : une soirée n'existe que si quelqu'un l'a créée
-    explicitement. C'est ce qui empêche d'entrer en devinant un nom.
+    """Une soirée n'existe que si quelqu'un l'a créée : deviner un nom n'ouvre rien.
+    Exception voulue : un identifiant signé par ce serveur est recréé vide s'il
+    manque — c'est ce qui fait survivre les liens à un redémarrage (chaque
+    déploiement en est un), les chalets se ré-enregistrant ensuite tout seuls.
 
     On tente la clé telle quelle avant de la normaliser : un identifiant valide ne
     doit jamais dépendre des transformations de slug()."""
-    return parties.get(code) or parties.get(slug(code))
+    party = parties.get(code) or parties.get(slug(code))
+    if party is None and id_is_signed(code) and len(parties) < MAX_PARTIES:
+        party = Party(code, name_from_id(code))
+        parties[code] = party
+        log.info("soirée %s recréée depuis son lien signé", code)
+    return party
 
 
-def create_party(name: str) -> Party:
+def create_party(name: str) -> Party | None:
+    if len(parties) >= MAX_PARTIES:
+        return None
     party = Party(new_party_id(name), (name or "soirée").strip()[:60])
     parties[party.code] = party
     log.info("nouvelle soirée %s", party.code)
@@ -310,6 +381,18 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Veilleuse", version="0.1.0", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    if request.url.path.startswith("/api/"):
+        # jamais de cache : un clip audio ou un état ne doit pas survivre dans un navigateur
+        resp.headers["Cache-Control"] = "no-store, private"
+    return resp
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     return {"ok": True, "parties": len(parties), "version": app.version}
@@ -320,6 +403,8 @@ async def party_create(body: dict[str, Any]) -> dict[str, Any]:
     """Créer reste ouvert à tous : chacun fait sa soirée et partage son lien.
     C'est rejoindre qui demande de connaître l'identifiant complet."""
     party = create_party(str(body.get("name") or "")[:60])
+    if party is None:
+        return JSONResponse({"error": "server full"}, status_code=503)
     return {"code": party.code, "name": party.name}
 
 
@@ -351,6 +436,9 @@ async def websocket_endpoint(ws: WebSocket, code: str) -> None:
     party = get_party(code)
     if party is None:  # identifiant inconnu : on ne crée rien, on renvoie poliment
         await ws.send_text(json.dumps({"type": "unknown_party"}))
+        await ws.close()
+        return
+    if len(party.sockets) >= MAX_SOCKETS:
         await ws.close()
         return
     meta: dict[str, Any] = {"role": None, "name": None, "chalet_id": None}
@@ -385,13 +473,22 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
         return True
 
     if kind == "register":  # émetteur : {chalet_id, name, kids}
-        chalet = party.register_chalet(slug(msg.get("chalet_id") or msg.get("name", "")),
-                                       (msg.get("name") or "Chalet")[:40], (msg.get("kids") or "")[:80])
+        wanted = slug(msg.get("chalet_id") or msg.get("name", ""))
+        if wanted not in party.chalets and len(party.chalets) >= MAX_CHALETS:
+            return False
+        chalet = party.register_chalet(wanted, (msg.get("name") or "Chalet")[:40], (msg.get("kids") or "")[:80])
         meta["role"], meta["chalet_id"] = "chalet", chalet.id
         await ws.send_text(json.dumps({"type": "registered", "chalet_id": chalet.id}))
         return True
 
     chalet = party.chalets.get(msg.get("chalet_id") or meta.get("chalet_id") or "")
+
+    # Émettre pour un chalet est réservé à la socket qui s'y est enregistrée : avec
+    # le lien, un récepteur pouvait sinon fabriquer alertes, heartbeats et clips.
+    # « J'y vais », « C'est réglé » et « Écouter » restent ouverts à tous : c'est le principe.
+    is_emitter_of = meta.get("role") == "chalet" and chalet is not None and meta.get("chalet_id") == chalet.id
+    if kind in ("hb", "noise", "alert", "alert_clip", "clip", "test") and not is_emitter_of:
+        return False
 
     if kind == "hb" and chalet:
         changed = party.heartbeat(chalet, msg.get("level", 0), msg.get("battery"), msg.get("threshold"))
@@ -407,6 +504,10 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
     if kind == "alert" and chalet:
         party.raise_alert(chalet, msg.get("level", 0), msg.get("clip"), msg.get("reason", "noise"))
         return True
+
+    if kind == "alert_clip" and chalet:  # le clip arrive après coup : jamais une nouvelle alerte
+        party.attach_alert_clip(chalet, msg.get("clip"))
+        return chalet.alert is not None
 
     if kind == "ack" and chalet:
         party.ack(chalet, msg.get("by") or meta.get("name") or "")

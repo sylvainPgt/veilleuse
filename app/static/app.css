@@ -11,7 +11,7 @@
   --green: #45c98a;
   --orange: #ff9d3b;
   --red: #ff4d5e;
-  --grey: #6b7286;
+  --grey: #808aa0;  /* assez clair pour rester lisible en petit sur les cartes */
 
   /* Échelle d'espacement : on n'utilise que ces valeurs. */
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
@@ -154,6 +154,8 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 .arm-card { border-color: rgba(255,214,51,.5); }
 .arm-card p { margin: 0; color: var(--muted); }
 .own-picker { display: flex; align-items: center; gap: var(--s2); font-size: var(--t-sm); color: var(--muted); margin-bottom: var(--s4); }
+.own-picker.todo label { color: var(--orange); font-weight: 700; }
+.own-picker.todo select { border-color: var(--orange); }
 .own-picker select { width: auto; flex: 1; min-width: 0; padding: var(--s2) var(--s3); font-size: var(--t-sm); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--s3); }
 
@@ -229,6 +231,15 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 
 /* Assez haut pour ne pas couvrir les boutons de l'écran chalet, et surtout
    transparent aux appuis : un message passager ne doit jamais bloquer un geste. */
+.conn-lost {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 70;
+  display: flex; gap: var(--s3); align-items: flex-start;
+  background: var(--red); color: #fff; padding: calc(env(safe-area-inset-top) + var(--s3)) var(--s4) var(--s3);
+  font-size: var(--t-sm); line-height: 1.4; animation: blink 1.6s infinite;
+}
+.conn-lost .ic { flex: none; margin-top: .15em; }
+body.sono .conn-lost { font-size: var(--t-lg); }
+
 .toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 10rem); transform: translateX(-50%);
   background: #fff; color: #111; padding: var(--s3) var(--s4); border-radius: var(--s3);

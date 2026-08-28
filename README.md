@@ -92,7 +92,9 @@ Un tour de ronde physique toutes les 30 à 45 minutes reste une bonne idée : l'
 
 **Watchdog serveur.** Toutes les 2 secondes : un chalet sans heartbeat depuis 45 s devient « muet » ; une alerte non acquittée depuis 90 s passe en « escalade ». Les deux délais se règlent par variables d'environnement (`VEILLEUSE_HEARTBEAT_TIMEOUT`, `VEILLEUSE_ESCALATION_DELAY`).
 
-**Aucune donnée conservée.** Tout est en mémoire, rien n'est écrit sur disque. Un clip s'efface dès que l'alerte est réglée, et de toute façon au bout de deux minutes (`VEILLEUSE_CLIP_TTL`) : aucun son d'un chalet ne traîne sur le serveur. Les soirées s'oublient toutes seules : 15 minutes pour une soirée restée vide (`VEILLEUSE_PARTY_EMPTY_TTL`), 24 heures sans activité pour les autres (`VEILLEUSE_PARTY_TTL`) — il n'y a donc rien à supprimer à la main. Un redémarrage du serveur vide l'état ; les émetteurs se ré-enregistrent automatiquement à la reconnexion.
+**Aucune donnée conservée.** Tout est en mémoire, rien n'est écrit sur disque. Un clip s'efface dès que l'alerte est réglée, et de toute façon au bout de deux minutes (`VEILLEUSE_CLIP_TTL`) — clip d'alerte compris : aucun son d'un chalet ne traîne sur le serveur, et les réponses de l'API sont servies en `no-store`. Les soirées s'oublient toutes seules : 15 minutes pour une soirée restée vide (`VEILLEUSE_PARTY_EMPTY_TTL`), 24 heures sans activité pour les autres (`VEILLEUSE_PARTY_TTL`).
+
+**Un redémarrage du serveur ne casse pas les liens.** Les identifiants de soirée sont signés (HMAC) avec `VEILLEUSE_SECRET` : un lien valide recrée sa soirée vide au premier retour, et les chalets se ré-enregistrent tout seuls. **Définissez `VEILLEUSE_SECRET`** (une longue valeur aléatoire) en production — sans elle, un secret est tiré à chaque démarrage et les liens meurent avec le processus. Un redémarrage du serveur vide l'état ; les émetteurs se ré-enregistrent automatiquement à la reconnexion.
 
 ### Protocole WebSocket (`/ws/{code}`)
 
@@ -129,7 +131,7 @@ Prévoyez de tester **sur place, dans un chalet, avec l'opérateur de chaque cou
 
 - **L'app doit rester au premier plan sur le téléphone du chalet**, écran allumé. iOS et Android coupent le micro d'un onglet en arrière-plan. Le wake lock empêche la mise en veille (une pastille ⚠️ s'affiche s'il n'est pas disponible, notamment avant iOS 16.4 — désactivez alors le verrouillage automatique), mais si quelqu'un verrouille l'écran, le chalet passera « muet » au bout de 45 secondes — c'est voulu, on préfère une fausse alerte à un faux silence.
 - **Un appel entrant** sur le téléphone du chalet interrompt le micro (surtout sur iPhone). D'où le mode « Ne pas déranger ».
-- **Les notifications d'une webapp fermée** sont peu fiables sur iPhone. Les récepteurs gardent la page ouverte dans la poche ; l'écran de la sono est là pour ça.
+- **Un téléphone verrouillé peut rater une alerte.** La sonnerie vient de la page ; si le système la suspend (écran éteint, app en arrière-plan), il ne reste que la notification, qui n'est pas garantie — surtout sur iPhone. Les récepteurs gardent la page ouverte ; l'écran de la sono est le filet de sécurité de tout le monde.
 - **Pas de flux continu** (volontairement) : en réseau faible, un flux permanent est la première chose qui casse. À la place, le bouton **« 🔊 Écouter »** demande au chalet d'enregistrer 10 secondes et de les renvoyer — une écoute à la demande, en quasi-direct, qui garde les mêmes propriétés réseau que le reste. Le chalet affiche qui écoute et le journal le trace.
 - Ce n'est **pas un dispositif médical ni de sécurité** : c'est un outil d'entraide entre parents pour une soirée, pas un remplacement de la surveillance.
 
