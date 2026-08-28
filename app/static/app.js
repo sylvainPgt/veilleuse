@@ -80,14 +80,22 @@
   };
   const linkFor = (code) => `${location.origin}/#${code}`;
 
-  // Historique local : le même confort qu'une liste, sans rien exposer sur le serveur.
+  // Historique local : il ne quitte jamais ce téléphone (localStorage), et il contient
+  // la clé de la soirée — donc il s'oublie tout seul, et on peut l'effacer à la main.
+  const RECENT_TTL = 7 * 24 * 3600 * 1000;
   const recent = {
-    all: () => store.get("recent", []),
+    all() {
+      const t = Date.now();
+      const list = store.get("recent", []).filter((p) => p.code && t - (p.ts || 0) < RECENT_TTL);
+      return list;
+    },
     add(code, name) {
       const list = recent.all().filter((p) => p.code !== code);
-      list.unshift({ code, name: name || code });
+      list.unshift({ code, name: name || code, ts: Date.now() });
       store.set("recent", list.slice(0, 6));
     },
+    forget(code) { store.set("recent", recent.all().filter((p) => p.code !== code)); },
+    clear() { store.set("recent", []); },
   };
 
   // On ne demande que ce que le rôle choisi rend nécessaire : le prénom ne sert
@@ -115,14 +123,21 @@
     const list = recent.all();
     $("home-parties").classList.toggle("hidden", createMode || !list.length);
     $("party-chips").innerHTML = list.map((p) =>
-      `<button type="button" class="btn chip" data-code="${esc(p.code)}">${esc(p.name)}</button>`).join("");
+      `<span class="chip-wrap"><button type="button" class="btn chip" data-code="${esc(p.code)}">${esc(p.name)}</button>` +
+      `<button type="button" class="btn chip-x" data-forget="${esc(p.code)}" aria-label="Oublier ${esc(p.name)}" title="Oublier cette soirée">×</button></span>`).join("");
   }
   $("party-chips").addEventListener("click", (e) => {
+    const f = e.target.closest("[data-forget]");
+    if (f) { recent.forget(f.dataset.forget); loadParties(); return toast("Soirée oubliée sur ce téléphone"); }
     const b = e.target.closest("[data-code]"); if (!b) return;
     $("in-code").value = linkFor(b.dataset.code);
     document.querySelectorAll("#party-chips .chip").forEach((c) => c.classList.toggle("exact", c === b));
     const step = ROLE_STEP[chosenRole];
     if (step?.name && !$("in-name").value) $("in-name").focus();
+  });
+
+  $("btn-forget-all").addEventListener("click", () => {
+    recent.clear(); loadParties(); toast("Historique effacé sur ce téléphone");
   });
 
   // Créer ou rejoindre : deux chemins, un seul écran.
@@ -183,6 +198,12 @@
   });
 
   function enterParty() {
+    // Mémorisée seulement une fois qu'on y entre vraiment, jamais sur l'écran de la sono
+    // qui est souvent un ordinateur partagé.
+    if (!isSono) {
+      const known = recent.all().find((p) => p.code === session.code);
+      recent.add(session.code, known?.name || pendingName || session.code.replace(/-[a-z2-9]{10}$/, ""));
+    }
     if (chosenRole === "chalet") startChaletSetup();
     else if (chosenRole === "sono") { location.href = `/?mode=sono#${session.code}`; }
     else startSalle();
@@ -633,8 +654,23 @@
     session.name = "écran sono";
     if (session.code) startSalle(); else show("home");
   } else if (linkCode) {
-    $("in-code").value = linkFor(linkCode);   // arrivée par le lien : il ne reste qu'à choisir son rôle
-    const known = recent.all().find((p) => p.code === linkCode);
+    applyLinkCode(linkCode);   // arrivée par le lien : il ne reste qu'à choisir son rôle
+  }
+
+  // Taper le lien alors que l'app est déjà ouverte ne change que le fragment : le
+  // navigateur ne recharge pas la page, il faut donc écouter le changement nous-mêmes.
+  window.addEventListener("hashchange", () => {
+    const code = codeFromLink(location.hash);
+    if (!code || code === session.code) return;
+    if (session.role) { stopEverything(); show("home"); }
+    applyLinkCode(code);
+    toast("Soirée reconnue depuis le lien — choisissez le rôle de ce téléphone", 5000);
+  });
+
+  function applyLinkCode(code) {
+    if (createMode) $("btn-toggle-create").click();   // un lien reçu : on rejoint, on ne crée pas
+    $("in-code").value = linkFor(code);
+    const known = recent.all().find((p) => p.code === code);
     if (known) $("home-role-label").textContent = known.name;
   }
 
