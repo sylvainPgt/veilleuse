@@ -72,7 +72,7 @@ pytest
 5. Sur le PC de la sono : **« Écran de la sono »**, puis plein écran.
 6. Quand ça sonne : n'importe qui tape **« J'y vais »**. Si personne ne répond en 90 secondes, l'alerte passe en escalade rouge clignotant sur tous les téléphones. Une fois sur place, **« C'est réglé »**.
 
-Un tour de ronde physique toutes les 30 à 45 minutes reste une bonne idée : l'app détecte les pleurs, pas un enfant qui se lève en silence.
+Veilleuse entend, elle ne voit pas : elle détecte les pleurs et les bruits, comme un babyphone audio — pas un enfant qui se lève ou a un souci sans faire de bruit.
 
 ## Comment ça marche
 

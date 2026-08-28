@@ -681,7 +681,7 @@
         c.status !== "offline"
           ? `<button class="btn ghost" data-listen="${esc(c.id)}">${ic("i-speaker")} ${salle.awaitingClip === c.id ? "…" : "Écouter"}</button>` : "",
         c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}">${ic("i-replay")} Réécouter</button>` : "",
-        a?.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}" aria-label="Écouter l'alerte">${ic("i-play")}</button>` : "",
+        a?.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}">${ic("i-play")} Écouter l'alerte</button>` : "",
         a ? `<button class="btn ghost" data-resolve="${esc(c.id)}">C'est réglé</button>` : "",
       ].filter(Boolean).join("");
       const primary = a && !a.acked_by ? `<button class="btn primary" data-ack="${esc(c.id)}">J'y vais</button>` : "";
