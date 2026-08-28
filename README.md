@@ -111,7 +111,13 @@ Un tour de ronde physique toutes les 30 à 45 minutes reste une bonne idée : l'
 | ← | `{"type":"state", chalets:[…], events:[…], now}` | Serveur : état complet à chaque changement |
 | ← | `{"type":"level","chalet_id","level","battery","ts"}` | Serveur : mise à jour légère de la barre de niveau |
 
-`GET /api/party/{code}` renvoie le même état ; `GET /api/parties` liste les soirées vivantes (proposées sur l'accueil pour éviter les fautes de frappe) ; `GET /api/health` pour la supervision.
+`POST /api/parties {name}` crée une soirée et renvoie son identifiant ; `GET /api/party/{code}` renvoie l'état (404 si l'identifiant est inconnu) ; `GET /api/health` pour la supervision. La page `/admin`, protégée par `VEILLEUSE_ADMIN_TOKEN` (en-tête `X-Admin-Token`), liste et supprime les soirées.
+
+### Qui peut entrer
+
+L'identifiant d'une soirée est son secret : `les-40-ans-de-silou-4u7t3dydqf`, dont les dix derniers caractères sont tirés au hasard. **Rien n'est créé implicitement** — se connecter à un identifiant inconnu répond `unknown_party` au lieu d'ouvrir une soirée vide, donc deviner un nom ne mène nulle part. L'organisateur crée sa soirée, reçoit un lien, et le partage ; il n'existe aucune liste publique. L'identifiant voyage dans le fragment de l'URL (`/#...`), qui n'est envoyé ni au serveur ni dans l'en-tête `Referer`.
+
+Créer reste ouvert à tous : chacun fait sa soirée et partage son propre lien. Deux groupes peuvent donner le même nom à la leur sans se croiser.
 
 ## Déploiement
 

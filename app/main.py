@@ -13,13 +13,14 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import unicodedata
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -38,7 +39,18 @@ WATCHDOG_PERIOD = 2.0
 MAX_EVENTS = 60
 MAX_CLIP_BYTES = 200_000  # clip audio base64, on refuse au-delà pour protéger le réseau faible
 
+ADMIN_TOKEN = os.getenv("VEILLEUSE_ADMIN_TOKEN", "")                        # vide = page d'admin désactivée
+
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Sans i, l, o, 0, 1 : un identifiant qu'on peut relire à voix haute sans se tromper.
+ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+
+
+def new_party_id(name: str) -> str:
+    """Nom lisible + suffixe imprévisible. C'est ce suffixe qui protège la soirée :
+    on ne devine pas « anniv-sylvain-k3f9x2qa » en tapant « anniv-sylvain »."""
+    return f"{slug(name)[:24]}-{''.join(secrets.choice(ID_ALPHABET) for _ in range(10))}"
 
 
 def now() -> float:
@@ -99,8 +111,9 @@ class Chalet:
 
 
 class Party:
-    def __init__(self, code: str):
+    def __init__(self, code: str, name: str = ""):
         self.code = code
+        self.name = name or code
         self.chalets: dict[str, Chalet] = {}
         self.events: list[dict[str, Any]] = []
         self.sockets: dict[WebSocket, dict[str, Any]] = {}
@@ -119,6 +132,7 @@ class Party:
         return {
             "type": "state",
             "code": self.code,
+            "name": self.name,
             "now": now(),
             "config": {"heartbeat_timeout": HEARTBEAT_TIMEOUT, "escalation_delay": ESCALATION_DELAY},
             "chalets": [c.to_dict() for c in self.chalets.values()],
@@ -247,12 +261,17 @@ def cleanup_parties() -> bool:
     return changed
 
 
-def get_party(code: str) -> Party:
-    code = slug(code)
-    if code not in parties:
-        parties[code] = Party(code)
-        log.info("nouvelle soirée %s", code)
-    return parties[code]
+def get_party(code: str) -> Party | None:
+    """Ne crée plus rien : une soirée n'existe que si quelqu'un l'a créée
+    explicitement. C'est ce qui empêche d'entrer en devinant un nom."""
+    return parties.get(slug(code))
+
+
+def create_party(name: str) -> Party:
+    party = Party(new_party_id(name), (name or "soirée").strip()[:60])
+    parties[party.code] = party
+    log.info("nouvelle soirée %s", party.code)
+    return party
 
 
 # --- Application -------------------------------------------------------------
@@ -287,26 +306,27 @@ async def health() -> dict[str, Any]:
     return {"ok": True, "parties": len(parties), "version": app.version}
 
 
-@app.get("/api/parties")
-async def parties_list() -> dict[str, Any]:
-    """Les soirées vivantes, pour l'accueil : on rejoint l'existante au lieu d'en
-    créer une par faute de frappe. Les coquilles vides ne sont pas montrées."""
-    return {"parties": [
-        {"code": p.code, "chalets": len(p.chalets),
-         "receivers": sum(1 for m in p.sockets.values() if m.get("role") == "salle")}
-        for p in parties.values() if p.chalets or p.sockets
-    ]}
+@app.post("/api/parties")
+async def party_create(body: dict[str, Any]) -> dict[str, Any]:
+    """Créer reste ouvert à tous : chacun fait sa soirée et partage son lien.
+    C'est rejoindre qui demande de connaître l'identifiant complet."""
+    party = create_party(str(body.get("name") or "")[:60])
+    return {"code": party.code, "name": party.name}
 
 
 @app.get("/api/party/{code}")
-async def party_state(code: str) -> dict[str, Any]:
-    return get_party(code).snapshot()
+async def party_state(code: str):
+    party = get_party(code)
+    if party is None:
+        return JSONResponse({"error": "unknown party"}, status_code=404)
+    return party.snapshot()
 
 
 @app.get("/api/party/{code}/chalet/{chalet_id}/clip")
 async def chalet_clip(code: str, chalet_id: str, kind: str = "fresh"):
     """kind=fresh : le dernier clip demandé à la volée. kind=alert : celui de l'alerte."""
-    chalet = get_party(code).chalets.get(chalet_id)
+    party = get_party(code)
+    chalet = party.chalets.get(chalet_id) if party else None
     if not chalet:
         return JSONResponse({"error": "no clip"}, status_code=404)
     if kind == "fresh" and chalet.clip:
@@ -320,6 +340,10 @@ async def chalet_clip(code: str, chalet_id: str, kind: str = "fresh"):
 async def websocket_endpoint(ws: WebSocket, code: str) -> None:
     await ws.accept()
     party = get_party(code)
+    if party is None:  # identifiant inconnu : on ne crée rien, on renvoie poliment
+        await ws.send_text(json.dumps({"type": "unknown_party"}))
+        await ws.close()
+        return
     meta: dict[str, Any] = {"role": None, "name": None, "chalet_id": None}
     party.sockets[ws] = meta
     await ws.send_text(json.dumps(party.snapshot()))
@@ -416,10 +440,48 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
     return False
 
 
+# --- Administration ----------------------------------------------------------
+def admin_ok(request: Request) -> bool:
+    token = request.headers.get("x-admin-token", "")
+    return bool(ADMIN_TOKEN) and secrets.compare_digest(token, ADMIN_TOKEN)
+
+
+@app.get("/api/admin/parties")
+async def admin_parties(request: Request):
+    if not admin_ok(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    t = now()
+    return {"parties": sorted((
+        {"code": p.code, "name": p.name, "chalets": len(p.chalets),
+         "sockets": len(p.sockets), "idle": round(t - p.last_activity), "created": p.created}
+        for p in parties.values()), key=lambda d: d["idle"])}
+
+
+@app.delete("/api/admin/party/{code}")
+async def admin_delete(request: Request, code: str):
+    if not admin_ok(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    party = parties.pop(slug(code), None)
+    if party is None:
+        return JSONResponse({"error": "unknown party"}, status_code=404)
+    for ws in list(party.sockets):       # on ferme aussi les connexions en cours
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+    log.info("soirée %s supprimée par l'admin", code)
+    return {"deleted": party.code}
+
+
 # --- Fichiers statiques (la webapp) ------------------------------------------
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/admin")
+async def admin_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "admin.html")
 
 
 @app.get("/aide")

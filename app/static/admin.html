@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1117">
+<meta name="robots" content="noindex, nofollow">
+<title>Veilleuse — administration</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .admin h1 { font-size: var(--t-xl); }
+  .admin table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+  .admin th { text-align: left; color: var(--muted); font-weight: 600; font-size: var(--t-xs);
+    text-transform: uppercase; letter-spacing: .08em; padding: var(--s2) var(--s2) var(--s2) 0; }
+  .admin td { padding: var(--s3) var(--s2) var(--s3) 0; border-top: 1px solid var(--line); vertical-align: top; }
+  .admin td.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--t-xs); color: var(--muted); word-break: break-all; }
+  .admin .num { font-variant-numeric: tabular-nums; }
+  .admin .live { color: var(--green); font-weight: 600; }
+  .wrapper { overflow-x: auto; }
+</style>
+</head>
+<body>
+<section class="view admin">
+  <h1>Administration</h1>
+  <p class="hint">Les soirées expirent seules&nbsp;: 15&nbsp;minutes si elles restent vides, 24&nbsp;heures sans activité sinon. Cette page ne sert qu'à forcer la suppression.</p>
+
+  <div id="auth" class="card">
+    <label>Jeton d'administration
+      <input id="in-token" type="password" autocomplete="off" placeholder="VEILLEUSE_ADMIN_TOKEN">
+    </label>
+    <button id="btn-login" class="btn primary">Ouvrir</button>
+  </div>
+
+  <div id="panel" class="hidden">
+    <div class="bar">
+      <span class="bar-title"><span id="count"></span></span>
+      <button id="btn-refresh" class="btn ghost small">Rafraîchir</button>
+    </div>
+    <div class="wrapper"><table>
+      <thead><tr><th>Soirée</th><th>Chalets</th><th>Connectés</th><th>Inactive</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+  </div>
+</section>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let toastTimer;
+  const toast = (m, ms = 3000) => { const t = $("toast"); t.textContent = m; t.classList.remove("hidden"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add("hidden"), ms); };
+  const fmtIdle = (s) => s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h`;
+
+  let token = sessionStorage.getItem("veilleuse.admin") || "";
+  const call = (path, opts = {}) => fetch(path, { ...opts, headers: { ...(opts.headers || {}), "X-Admin-Token": token } });
+
+  async function load() {
+    const r = await call("/api/admin/parties");
+    if (r.status === 403) { token = ""; sessionStorage.removeItem("veilleuse.admin"); $("panel").classList.add("hidden"); $("auth").classList.remove("hidden"); return toast("Jeton refusé", 4000); }
+    const { parties } = await r.json();
+    $("auth").classList.add("hidden"); $("panel").classList.remove("hidden");
+    $("count").textContent = parties.length ? `${parties.length} soirée${parties.length > 1 ? "s" : ""} en mémoire` : "Aucune soirée en mémoire";
+    $("rows").innerHTML = parties.map((p) => `<tr>
+      <td><strong>${esc(p.name)}</strong><div class="code">${esc(p.code)}</div></td>
+      <td class="num">${p.chalets}</td>
+      <td class="num ${p.sockets ? "live" : ""}">${p.sockets}</td>
+      <td class="num">${p.sockets ? "—" : fmtIdle(p.idle)}</td>
+      <td><button class="btn ghost small" data-del="${esc(p.code)}">Supprimer</button></td>
+    </tr>`).join("");
+  }
+
+  $("btn-login").addEventListener("click", () => {
+    token = $("in-token").value.trim();
+    if (!token) return toast("Entrez le jeton");
+    sessionStorage.setItem("veilleuse.admin", token);
+    load().catch(() => toast("Serveur injoignable", 4000));
+  });
+  $("btn-refresh").addEventListener("click", () => load().catch(() => toast("Serveur injoignable", 4000)));
+  $("rows").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-del]"); if (!b) return;
+    if (!confirm(`Supprimer cette soirée ?\n\nLes téléphones connectés seront déconnectés immédiatement.`)) return;
+    const r = await call("/api/admin/party/" + encodeURIComponent(b.dataset.del), { method: "DELETE" });
+    toast(r.ok ? "Soirée supprimée" : "Suppression impossible");
+    load();
+  });
+
+  if (token) load().catch(() => { $("auth").classList.remove("hidden"); });
+})();
+</script>
+</body>
+</html>

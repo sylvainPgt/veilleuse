@@ -75,7 +75,10 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 .btn.role.selected strong { color: var(--amber); }
 .btn.ghost.small.selected { border-color: var(--amber); color: var(--amber); }
 
-#home-parties { display: flex; flex-direction: column; gap: var(--s2); }
+#home-parties, #join-box, #create-box { display: flex; flex-direction: column; gap: var(--s2); }
+#share-card .share-link { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--t-sm);
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--s3);
+  padding: var(--s3); word-break: break-all; color: var(--amber); }
 .chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .btn.chip { padding: var(--s2) var(--s3); font-size: var(--t-sm); border-color: rgba(255,214,51,.4); }
 .btn.chip small { color: var(--muted); font-weight: 400; }

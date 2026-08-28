@@ -27,7 +27,7 @@
 
   // ---------- connexion WebSocket robuste (reconnexion + file hors ligne) ----------
   const net = {
-    ws: null, queue: [], backoff: 1000, onState: null, onMessage: null, onConn: null, open: false, hello: null, timer: null,
+    ws: null, queue: [], backoff: 1000, onState: null, onMessage: null, onConn: null, onUnknown: null, open: false, hello: null, timer: null,
     connect() {
       clearTimeout(this.timer);
       const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -41,7 +41,11 @@
         const q = this.queue.splice(0); q.forEach((m) => ws.send(JSON.stringify(m)));
         if (q.length) toast(`Connexion rétablie, ${q.length} message(s) renvoyé(s)`);
       };
-      ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } this.onMessage?.(m); };
+      ws.onmessage = (e) => {
+        let m; try { m = JSON.parse(e.data); } catch { return; }
+        if (m.type === "unknown_party") return this.onUnknown?.();
+        this.onMessage?.(m);
+      };
       ws.onclose = () => { this.open = false; this.onConn?.(false); this.retry(); };
       ws.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
     },
@@ -63,9 +67,28 @@
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && wakeLock !== null) keepAwake(); });
 
   // ---------- accueil ----------
-  $("in-code").value = store.get("code", "");
   $("in-name").value = store.get("name", "");
   let chosenRole = "";
+  let createMode = false;
+
+  // L'identifiant vit dans le fragment (#...) : il ne part donc ni dans les journaux
+  // du serveur ni dans l'en-tête Referer quand quelqu'un suit un lien depuis la page.
+  const codeFromLink = (v) => {
+    const s = String(v || "").trim();
+    const m = s.match(/#([a-z0-9-]+)\s*$/i) || s.match(/^([a-z0-9-]+)$/i);
+    return m ? m[1].toLowerCase() : "";
+  };
+  const linkFor = (code) => `${location.origin}/#${code}`;
+
+  // Historique local : le même confort qu'une liste, sans rien exposer sur le serveur.
+  const recent = {
+    all: () => store.get("recent", []),
+    add(code, name) {
+      const list = recent.all().filter((p) => p.code !== code);
+      list.unshift({ code, name: name || code });
+      store.set("recent", list.slice(0, 6));
+    },
+  };
 
   // On ne demande que ce que le rôle choisi rend nécessaire : le prénom ne sert
   // qu'aux récepteurs (il s'affiche dans « X y va »), le chalet n'en a pas besoin.
@@ -88,35 +111,92 @@
     else if (step.name && !$("in-name").value) $("in-name").focus();
   }));
 
-  // Les soirées déjà vivantes : on tape la sienne au lieu d'en créer une par faute de frappe.
-  async function loadParties() {
-    let list = [];
-    try { list = (await (await fetch("/api/parties")).json()).parties || []; } catch { /* hors ligne */ }
-    $("home-parties").classList.toggle("hidden", !list.length);
+  function loadParties() {
+    const list = recent.all();
+    $("home-parties").classList.toggle("hidden", createMode || !list.length);
     $("party-chips").innerHTML = list.map((p) =>
-      `<button type="button" class="btn chip" data-code="${esc(p.code)}">${esc(p.code)} <small>· ${p.chalets} chalet${p.chalets > 1 ? "s" : ""}</small></button>`).join("");
+      `<button type="button" class="btn chip" data-code="${esc(p.code)}">${esc(p.name)}</button>`).join("");
   }
   $("party-chips").addEventListener("click", (e) => {
     const b = e.target.closest("[data-code]"); if (!b) return;
-    $("in-code").value = b.dataset.code;
+    $("in-code").value = linkFor(b.dataset.code);
     document.querySelectorAll("#party-chips .chip").forEach((c) => c.classList.toggle("exact", c === b));
     const step = ROLE_STEP[chosenRole];
     if (step?.name && !$("in-name").value) $("in-name").focus();
   });
 
-  $("form-home").addEventListener("submit", (e) => {
+  // Créer ou rejoindre : deux chemins, un seul écran.
+  $("btn-toggle-create").addEventListener("click", () => {
+    createMode = !createMode;
+    $("create-box").classList.toggle("hidden", !createMode);
+    $("join-box").classList.toggle("hidden", createMode);
+    $("in-code").required = !createMode;
+    $("btn-toggle-create").textContent = createMode
+      ? "← J'ai un lien, je rejoins une soirée"
+      : "Je n'ai pas de lien — créer une soirée";
+    $("btn-continue").textContent = createMode ? "Créer la soirée" : ROLE_STEP[chosenRole]?.cta || "Continuer";
+    loadParties();
+    (createMode ? $("in-partyname") : $("in-code")).focus();
+  });
+
+  async function createParty() {
+    const name = $("in-partyname").value.trim() || "Soirée";
+    let data;
+    try {
+      const r = await fetch("/api/parties", { method: "POST", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ name }) });
+      if (!r.ok) throw new Error();
+      data = await r.json();
+    } catch { return toast("Création impossible, vérifiez la connexion", 4000); }
+    recent.add(data.code, data.name);
+    pendingCode = data.code; pendingName = data.name;
+    $("share-title").textContent = `« ${data.name} » est prête`;
+    $("share-link").textContent = linkFor(data.code);
+    $("form-home").classList.add("hidden");
+    $("share-card").classList.remove("hidden");
+  }
+
+  let pendingCode = "", pendingName = "";
+  $("btn-share").addEventListener("click", async () => {
+    const url = linkFor(pendingCode);
+    const text = `Veilleuse pour « ${pendingName} » — le babyphone collectif de la soirée. Ce lien est la clé, gardez-le entre nous : ${url}`;
+    try {
+      if (navigator.share) return await navigator.share({ title: "Veilleuse", text });
+      await navigator.clipboard.writeText(text); toast("Lien copié, collez-le dans votre groupe");
+    } catch { toast("Copiez le lien affiché ci-dessus", 4000); }
+  });
+  $("btn-share-go").addEventListener("click", () => {
+    session.code = pendingCode;
+    $("share-card").classList.add("hidden"); $("form-home").classList.remove("hidden");
+    enterParty();
+  });
+
+  $("form-home").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!chosenRole) return toast("Choisissez d'abord ce que fait ce téléphone");
-    session.code = slug($("in-code").value); session.name = $("in-name").value.trim();
-    if (!session.code) return toast("Il faut un code de soirée");
-    store.set("code", $("in-code").value.trim()); store.set("name", session.name);
-    if (chosenRole === "chalet") startChaletSetup();
-    else if (chosenRole === "sono") { location.search = "?mode=sono&code=" + encodeURIComponent(session.code); }
-    else startSalle();
+    session.name = $("in-name").value.trim();
+    store.set("name", session.name);
+    if (createMode) return createParty();
+    session.code = codeFromLink($("in-code").value);
+    if (!session.code) return toast("Collez le lien reçu par message", 4000);
+    enterParty();
   });
+
+  function enterParty() {
+    if (chosenRole === "chalet") startChaletSetup();
+    else if (chosenRole === "sono") { location.href = `/?mode=sono#${session.code}`; }
+    else startSalle();
+  }
   document.querySelectorAll("[data-back]").forEach((b) => b.addEventListener("click", () => { stopEverything(); show("home"); }));
 
   function stopEverything() { detector.stop(); net.close(); salle.stop(); }
+
+  // Lien périmé ou mal recopié : on le dit, au lieu de laisser tourner un tableau vide.
+  function onUnknownParty() {
+    stopEverything();
+    show("home");
+    toast("Cette soirée n'existe pas ou a expiré. Demandez le lien à l'organisateur.", 7000);
+  }
 
   // ============================================================
   //  ÉMETTEUR (chalet)
@@ -240,6 +320,7 @@
       else if (me.alert.acked_by) { st.textContent = `${me.alert.acked_by} arrive`; st.className = "run-status alert"; $("run-msg").textContent = "Quelqu'un est en route."; }
       else { st.textContent = "Alerte envoyée"; st.className = "run-status alert"; $("run-msg").textContent = "Les téléphones de la salle sonnent."; }
     };
+    net.onUnknown = onUnknownParty;
     net.connect();
 
     detector.onLevel = onChaletLevel;
@@ -331,11 +412,15 @@
 
   function startSalle() {
     session.role = "salle";
-    show("salle"); $("salle-code").textContent = "Soirée « " + session.code + " »"; $("empty-code").textContent = session.code;
+    show("salle");
+    const known = recent.all().find((p) => p.code === session.code);
+    $("salle-code").textContent = known ? `Soirée « ${known.name} »` : "Soirée";
+    $("empty-code").textContent = known?.name || "";
     if (isSono) { $("salle-armed").classList.remove("hidden"); keepAwake(); }
     net.hello = { type: "hello", role: "salle", name: session.name || (isSono ? "écran sono" : "") };
     net.onConn = (ok) => { const p = $("salle-conn"); p.textContent = ok ? "● connecté" : "○ reconnexion…"; p.className = "pill " + (ok ? "ok" : "bad"); };
     net.onMessage = onSalleMessage;
+    net.onUnknown = onUnknownParty;
     net.connect();
     salle.tickTimer = setInterval(renderTiles, 1000);
     salle.remindTimer = setInterval(remind, 8000);
@@ -542,12 +627,15 @@
   }
 
   // ---------- démarrage automatique ----------
+  const linkCode = codeFromLink(location.hash);
   if (isSono) {
-    session.code = slug(params.get("code") || store.get("code", ""));
+    session.code = linkCode;
     session.name = "écran sono";
     if (session.code) startSalle(); else show("home");
-  } else if (params.get("code")) {
-    $("in-code").value = params.get("code");
+  } else if (linkCode) {
+    $("in-code").value = linkFor(linkCode);   // arrivée par le lien : il ne reste qu'à choisir son rôle
+    const known = recent.all().find((p) => p.code === linkCode);
+    if (known) $("home-role-label").textContent = known.name;
   }
 
   // Service worker : permet l'installation sur l'écran d'accueil (icône, plein écran)

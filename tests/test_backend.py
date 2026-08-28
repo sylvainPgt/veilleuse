@@ -88,20 +88,54 @@ def test_http_endpoints():
     client = TestClient(app)
     assert client.get("/api/health").json()["ok"] is True
     assert client.get("/").status_code == 200
-    state = client.get("/api/party/Ma Soirée").json()
-    assert state["code"] == "ma-soiree" and state["chalets"] == []
-    assert client.get("/api/party/ma-soiree/chalet/nope/clip").status_code == 404
+    # deviner un nom ne suffit plus : une soirée n'existe que si on l'a créée
+    assert client.get("/api/party/ma-soiree").status_code == 404
+    created = client.post("/api/parties", json={"name": "Ma Soirée"}).json()
+    assert created["name"] == "Ma Soirée"
+    assert created["code"].startswith("ma-soiree-") and len(created["code"]) > len("ma-soiree-") + 8
+    state = client.get(f"/api/party/{created['code']}").json()
+    assert state["name"] == "Ma Soirée" and state["chalets"] == []
+    assert client.get(f"/api/party/{created['code']}/chalet/nope/clip").status_code == 404
+
+
+def test_party_ids_are_unguessable_and_unique():
+    a = main.create_party("Anniv Sylvain")
+    b = main.create_party("Anniv Sylvain")
+    assert a.code != b.code                      # deux groupes, même nom, aucune collision
+    assert main.get_party("anniv-sylvain") is None  # le nom seul n'ouvre rien
+
+
+def test_unknown_party_is_refused_on_websocket():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/nexiste-pas-abcdefghij") as ws:
+            assert ws.receive_json() == {"type": "unknown_party"}
+    assert "nexiste-pas-abcdefghij" not in main.parties  # et rien n'a été créé au passage
+
+
+def test_admin_requires_token(monkeypatch):
+    client = TestClient(app)
+    monkeypatch.setattr(main, "ADMIN_TOKEN", "")
+    assert client.get("/api/admin/parties").status_code == 403      # désactivé si non configuré
+    monkeypatch.setattr(main, "ADMIN_TOKEN", "s3cret")
+    assert client.get("/api/admin/parties").status_code == 403      # sans jeton
+    assert client.get("/api/admin/parties", headers={"X-Admin-Token": "faux"}).status_code == 403
+    party = main.create_party("À supprimer")
+    ok = client.get("/api/admin/parties", headers={"X-Admin-Token": "s3cret"})
+    assert ok.status_code == 200 and any(p["code"] == party.code for p in ok.json()["parties"])
+    assert client.delete(f"/api/admin/party/{party.code}", headers={"X-Admin-Token": "s3cret"}).status_code == 200
+    assert party.code not in main.parties
 
 
 def test_websocket_flow():
     with TestClient(app) as client:  # un seul portail : les deux sockets partagent la boucle
-        with client.websocket_connect("/ws/fete") as emitter, client.websocket_connect("/ws/fete") as receiver:
+        code = main.create_party("fête").code
+        with client.websocket_connect(f"/ws/{code}") as emitter, client.websocket_connect(f"/ws/{code}") as receiver:
             recv_until(emitter, "state"); recv_until(receiver, "state")
             receiver.send_json({"type": "hello", "role": "salle", "name": "Marie"})
             emitter.send_json({"type": "register", "chalet_id": "mesange", "name": "Mésange", "kids": "Léo"})
             assert recv_until(emitter, "registered") == {"type": "registered", "chalet_id": "mesange"}
 
-            chalet = main.parties["fete"].chalets["mesange"]
+            chalet = main.parties[code].chalets["mesange"]
             st = recv_until_state(receiver, lambda s: s["chalets"] and s["chalets"][0]["name"] == "Mésange")
             assert "Marie" in st["receivers"]
 
@@ -129,7 +163,8 @@ def test_websocket_flow():
 def test_listen_on_demand():
     """La salle demande à entendre, le chalet enregistre, tout le monde peut lire."""
     with TestClient(app) as client:  # un seul portail : les deux sockets partagent la boucle
-        with client.websocket_connect("/ws/ecoute") as emitter, client.websocket_connect("/ws/ecoute") as receiver:
+        code = main.create_party("écoute").code
+        with client.websocket_connect(f"/ws/{code}") as emitter, client.websocket_connect(f"/ws/{code}") as receiver:
             recv_until(emitter, "state"); recv_until(receiver, "state")
             receiver.send_json({"type": "hello", "role": "salle", "name": "Marie"})
             emitter.send_json({"type": "register", "chalet_id": "mesange", "name": "Mésange", "kids": ""})
@@ -139,7 +174,7 @@ def test_listen_on_demand():
             # la demande part vers l'émetteur seul, pas en diffusion
             ask = recv_until(emitter, "clip_request")
             assert ask == {"type": "clip_request", "seconds": main.LISTEN_SECONDS, "by": "Marie"}
-            chalet = main.parties["ecoute"].chalets["mesange"]
+            chalet = main.parties[code].chalets["mesange"]
             assert chalet.listen_by == "Marie"  # « Marie écoute » visible partout
             assert chalet.to_dict()["listen_by"] == "Marie"
 
@@ -148,11 +183,11 @@ def test_listen_on_demand():
             assert ready["chalet_id"] == "mesange"
             assert ready["ts"] == pytest.approx(time.time(), abs=5)
 
-        body = client.get("/api/party/ecoute/chalet/mesange/clip").json()
+        body = client.get(f"/api/party/{code}/chalet/mesange/clip").json()
         assert body["clip"] == "data:audio/mp4;base64,AAAA" and body["by"] == "Marie"
 
     # « X écoute » s'efface tout seul
-    party = main.parties["ecoute"]
+    party = main.parties[code]
     party.chalets["mesange"].listen_at -= main.LISTEN_HOLD + 1
     assert party.watchdog()
     assert party.chalets["mesange"].listen_by is None
@@ -174,34 +209,28 @@ def test_on_demand_clip_never_lingers():
     assert c.clip is None and c.to_dict()["has_fresh_clip"] is False
 
 
-def test_party_lifecycle_and_listing():
-    """Les soirées naissent à la volée, se listent, et s'oublient toutes seules."""
-    client = TestClient(app)
-    # une faute de frappe crée une coquille vide : jamais listée, vite oubliée
-    client.get("/api/party/fote-de-frape")
-    assert client.get("/api/parties").json()["parties"] == []
-    main.parties["fote-de-frape"].last_activity -= main.PARTY_EMPTY_TTL + 1
+def test_parties_expire_on_their_own():
+    """Créée puis abandonnée, une soirée s'oublie ; personne n'a à la supprimer."""
+    vide = main.create_party("créée pour rien")
+    vide.last_activity -= main.PARTY_EMPTY_TTL + 1
     assert main.cleanup_parties()
-    assert "fote-de-frape" not in main.parties
+    assert vide.code not in main.parties
 
-    # une vraie soirée est listée avec son nombre de chalets
-    main.get_party("anniv").register_chalet("m", "Mésange", "")
-    listing = client.get("/api/parties").json()["parties"]
-    assert listing == [{"code": "anniv", "chalets": 1, "receivers": 0}]
-
-    # habitée mais désertée : elle survit un jour, pas plus
-    main.parties["anniv"].last_activity -= main.PARTY_EMPTY_TTL + 1
+    habitee = main.create_party("vraie soirée")
+    habitee.register_chalet("m", "Mésange", "")
+    habitee.last_activity -= main.PARTY_EMPTY_TTL + 1
     assert not main.cleanup_parties()          # trop tôt pour une soirée habitée
-    main.parties["anniv"].last_activity -= main.PARTY_TTL
+    habitee.last_activity -= main.PARTY_TTL
     assert main.cleanup_parties()
-    assert "anniv" not in main.parties
+    assert habitee.code not in main.parties
 
 
 def test_listen_without_emitter_is_refused():
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/vide") as receiver:
+        party = main.create_party("vide")
+        with client.websocket_connect(f"/ws/{party.code}") as receiver:
             recv_until(receiver, "state")
-            main.get_party("vide").register_chalet("absent", "Absent", "")
+            party.register_chalet("absent", "Absent", "")
             receiver.send_json({"type": "listen", "chalet_id": "absent", "by": "Paul"})
             m = recv_until(receiver, "listen_failed")
             assert "pas connecté" in m["reason"]
@@ -209,10 +238,11 @@ def test_listen_without_emitter_is_refused():
 
 def test_oversized_on_demand_clip_is_refused():
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/gros") as emitter:
+        party = main.create_party("gros")
+        with client.websocket_connect(f"/ws/{party.code}") as emitter:
             recv_until(emitter, "state")
             emitter.send_json({"type": "register", "chalet_id": "m", "name": "M", "kids": ""})
             recv_until(emitter, "registered")
             emitter.send_json({"type": "clip", "chalet_id": "m", "clip": "x" * (main.MAX_CLIP_BYTES + 1)})
             recv_until(emitter, "listen_failed")
-            assert main.parties["gros"].chalets["m"].clip is None
+            assert party.chalets["m"].clip is None

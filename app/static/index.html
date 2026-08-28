@@ -74,18 +74,37 @@
     <div id="home-step2" class="step hidden">
       <span class="step-label" id="home-role-label"></span>
       <div id="home-parties" class="hidden">
-        <span class="step-label">Soirées en cours — tapez pour rejoindre</span>
+        <span class="step-label">Vos soirées récentes</span>
         <div class="chips" id="party-chips"></div>
       </div>
-      <label>Code de la soirée
-        <input id="in-code" type="text" autocomplete="off" autocapitalize="none" placeholder="ex. anniv-sylvain" required>
-      </label>
+      <div id="join-box">
+        <label>Lien de la soirée
+          <input id="in-code" type="text" autocomplete="off" autocapitalize="none" placeholder="collez le lien reçu" required>
+        </label>
+        <small class="hint">Le lien vous a été envoyé par la personne qui organise. Sans lui, impossible de rejoindre&nbsp;— c'est ce qui protège les chambres des enfants.</small>
+      </div>
+      <div id="create-box" class="hidden">
+        <label>Nom de votre soirée
+          <input id="in-partyname" type="text" autocomplete="off" placeholder="ex. les 40 ans de Silou">
+        </label>
+        <small class="hint">Vous recevrez un lien secret à partager avec vos invités.</small>
+      </div>
       <label id="lab-name">Votre prénom
         <input id="in-name" type="text" autocomplete="given-name" placeholder="ex. Marie">
       </label>
       <button type="submit" id="btn-continue" class="btn primary">Continuer</button>
+      <button type="button" id="btn-toggle-create" class="btn ghost small">Je n'ai pas de lien — créer une soirée</button>
     </div>
   </form>
+
+  <!-- Après création : le lien à partager, une seule fois et une seule chose à faire. -->
+  <div id="share-card" class="card hidden">
+    <strong id="share-title">Votre soirée est prête</strong>
+    <p class="hint">Partagez ce lien avec vos invités. Il est la clé de la soirée&nbsp;: sans lui, personne ne peut entrer ni écouter.</p>
+    <div class="share-link" id="share-link"></div>
+    <button type="button" id="btn-share" class="btn primary">Partager le lien</button>
+    <button type="button" id="btn-share-go" class="btn secondary">Continuer vers la soirée</button>
+  </div>
   <p class="fine">Aucun compte, aucune donnée conservée : un code par soirée, c'est tout.</p>
   <a href="/aide" class="btn ghost small aide-link">Comment ça marche ? <svg class="ic"><use href="#i-chevron"/></svg></a>
 </section>
