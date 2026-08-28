@@ -83,9 +83,26 @@
     $("in-name").required = step.name;              // sinon un champ caché bloque l'envoi
     $("btn-continue").textContent = step.cta;
     $("home-step2").classList.remove("hidden");
+    loadParties();
     if (!$("in-code").value) $("in-code").focus();
     else if (step.name && !$("in-name").value) $("in-name").focus();
   }));
+
+  // Les soirées déjà vivantes : on tape la sienne au lieu d'en créer une par faute de frappe.
+  async function loadParties() {
+    let list = [];
+    try { list = (await (await fetch("/api/parties")).json()).parties || []; } catch { /* hors ligne */ }
+    $("home-parties").classList.toggle("hidden", !list.length);
+    $("party-chips").innerHTML = list.map((p) =>
+      `<button type="button" class="btn chip" data-code="${esc(p.code)}">${esc(p.code)} <small>· ${p.chalets} chalet${p.chalets > 1 ? "s" : ""}</small></button>`).join("");
+  }
+  $("party-chips").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-code]"); if (!b) return;
+    $("in-code").value = b.dataset.code;
+    document.querySelectorAll("#party-chips .chip").forEach((c) => c.classList.toggle("exact", c === b));
+    const step = ROLE_STEP[chosenRole];
+    if (step?.name && !$("in-name").value) $("in-name").focus();
+  });
 
   $("form-home").addEventListener("submit", (e) => {
     e.preventDefault();

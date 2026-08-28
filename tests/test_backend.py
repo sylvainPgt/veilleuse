@@ -174,6 +174,29 @@ def test_on_demand_clip_never_lingers():
     assert c.clip is None and c.to_dict()["has_fresh_clip"] is False
 
 
+def test_party_lifecycle_and_listing():
+    """Les soirées naissent à la volée, se listent, et s'oublient toutes seules."""
+    client = TestClient(app)
+    # une faute de frappe crée une coquille vide : jamais listée, vite oubliée
+    client.get("/api/party/fote-de-frape")
+    assert client.get("/api/parties").json()["parties"] == []
+    main.parties["fote-de-frape"].last_activity -= main.PARTY_EMPTY_TTL + 1
+    assert main.cleanup_parties()
+    assert "fote-de-frape" not in main.parties
+
+    # une vraie soirée est listée avec son nombre de chalets
+    main.get_party("anniv").register_chalet("m", "Mésange", "")
+    listing = client.get("/api/parties").json()["parties"]
+    assert listing == [{"code": "anniv", "chalets": 1, "receivers": 0}]
+
+    # habitée mais désertée : elle survit un jour, pas plus
+    main.parties["anniv"].last_activity -= main.PARTY_EMPTY_TTL + 1
+    assert not main.cleanup_parties()          # trop tôt pour une soirée habitée
+    main.parties["anniv"].last_activity -= main.PARTY_TTL
+    assert main.cleanup_parties()
+    assert "anniv" not in main.parties
+
+
 def test_listen_without_emitter_is_refused():
     with TestClient(app) as client:
         with client.websocket_connect("/ws/vide") as receiver:

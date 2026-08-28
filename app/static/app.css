@@ -75,6 +75,12 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 .btn.role.selected strong { color: var(--amber); }
 .btn.ghost.small.selected { border-color: var(--amber); color: var(--amber); }
 
+#home-parties { display: flex; flex-direction: column; gap: var(--s2); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.btn.chip { padding: var(--s2) var(--s3); font-size: var(--t-sm); border-color: rgba(255,214,51,.4); }
+.btn.chip small { color: var(--muted); font-weight: 400; }
+.btn.chip.exact { background: #232213; border-color: var(--amber); }
+
 .roles { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
 .btn.role { flex-direction: column; align-items: center; gap: var(--s1); padding: var(--s4) var(--s2); text-align: center; }
 .btn.role strong { font-size: var(--t-md); }

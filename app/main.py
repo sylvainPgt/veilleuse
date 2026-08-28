@@ -32,6 +32,8 @@ NOISE_HOLD = float(os.getenv("VEILLEUSE_NOISE_HOLD", "20"))                 # s 
 LISTEN_HOLD = float(os.getenv("VEILLEUSE_LISTEN_HOLD", "25"))               # s pendant lesquels « X écoute » reste affiché
 LISTEN_SECONDS = float(os.getenv("VEILLEUSE_LISTEN_SECONDS", "10"))         # durée du clip demandé à la volée
 CLIP_TTL = float(os.getenv("VEILLEUSE_CLIP_TTL", "120"))                    # s avant qu'un clip s'efface tout seul
+PARTY_EMPTY_TTL = float(os.getenv("VEILLEUSE_PARTY_EMPTY_TTL", "900"))      # s avant d'oublier une soirée jamais habitée (faute de frappe)
+PARTY_TTL = float(os.getenv("VEILLEUSE_PARTY_TTL", str(24 * 3600)))         # s avant d'oublier une soirée désertée
 WATCHDOG_PERIOD = 2.0
 MAX_EVENTS = 60
 MAX_CLIP_BYTES = 200_000  # clip audio base64, on refuse au-delà pour protéger le réseau faible
@@ -103,6 +105,7 @@ class Party:
         self.events: list[dict[str, Any]] = []
         self.sockets: dict[WebSocket, dict[str, Any]] = {}
         self.created = now()
+        self.last_activity = now()
 
     # -- événements / état ---------------------------------------------------
     def add_event(self, kind: str, chalet: Chalet | None = None, **extra: Any) -> dict[str, Any]:
@@ -227,6 +230,23 @@ class Party:
 parties: dict[str, Party] = {}
 
 
+def cleanup_parties() -> bool:
+    """Oublie les soirées mortes : sans personne de connecté, une soirée jamais
+    habitée (faute de frappe) part vite, une soirée finie part au bout d'un jour.
+    C'est la seule « suppression » — pas de compte, donc pas de bouton."""
+    t = now()
+    changed = False
+    for code, party in list(parties.items()):
+        if party.sockets:
+            continue
+        idle = t - party.last_activity
+        if (not party.chalets and idle > PARTY_EMPTY_TTL) or idle > PARTY_TTL:
+            del parties[code]
+            log.info("soirée %s expirée", code)
+            changed = True
+    return changed
+
+
 def get_party(code: str) -> Party:
     code = slug(code)
     if code not in parties:
@@ -239,6 +259,10 @@ def get_party(code: str) -> Party:
 async def watchdog_loop() -> None:
     while True:
         await asyncio.sleep(WATCHDOG_PERIOD)
+        try:
+            cleanup_parties()
+        except Exception:  # noqa: BLE001
+            log.exception("cleanup")
         for party in list(parties.values()):
             try:
                 if party.watchdog():
@@ -261,6 +285,17 @@ app = FastAPI(title="Veilleuse", version="0.1.0", lifespan=lifespan)
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     return {"ok": True, "parties": len(parties), "version": app.version}
+
+
+@app.get("/api/parties")
+async def parties_list() -> dict[str, Any]:
+    """Les soirées vivantes, pour l'accueil : on rejoint l'existante au lieu d'en
+    créer une par faute de frappe. Les coquilles vides ne sont pas montrées."""
+    return {"parties": [
+        {"code": p.code, "chalets": len(p.chalets),
+         "receivers": sum(1 for m in p.sockets.values() if m.get("role") == "salle")}
+        for p in parties.values() if p.chalets or p.sockets
+    ]}
 
 
 @app.get("/api/party/{code}")
@@ -291,6 +326,7 @@ async def websocket_endpoint(ws: WebSocket, code: str) -> None:
     try:
         while True:
             raw = await ws.receive_text()
+            party.last_activity = now()
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
