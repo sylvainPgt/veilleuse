@@ -49,8 +49,14 @@ ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 
 def new_party_id(name: str) -> str:
     """Nom lisible + suffixe imprévisible. C'est ce suffixe qui protège la soirée :
-    on ne devine pas « anniv-sylvain-k3f9x2qa » en tapant « anniv-sylvain »."""
-    return f"{slug(name)[:24]}-{''.join(secrets.choice(ID_ALPHABET) for _ in range(10))}"
+    on ne devine pas « anniv-sylvain-k3f9x2qa » en tapant « anniv-sylvain ».
+
+    L'identifiant doit être stable par slug() : sans le strip("-"), une troncature
+    tombant sur un tiret donnait « ...version--abcd », que slug() ramenait ensuite à
+    « ...version-abcd » — la soirée devenait alors introuvable.
+    """
+    prefix = slug(name)[:24].strip("-")
+    return f"{prefix}-{''.join(secrets.choice(ID_ALPHABET) for _ in range(10))}"
 
 
 def now() -> float:
@@ -263,8 +269,11 @@ def cleanup_parties() -> bool:
 
 def get_party(code: str) -> Party | None:
     """Ne crée plus rien : une soirée n'existe que si quelqu'un l'a créée
-    explicitement. C'est ce qui empêche d'entrer en devinant un nom."""
-    return parties.get(slug(code))
+    explicitement. C'est ce qui empêche d'entrer en devinant un nom.
+
+    On tente la clé telle quelle avant de la normaliser : un identifiant valide ne
+    doit jamais dépendre des transformations de slug()."""
+    return parties.get(code) or parties.get(slug(code))
 
 
 def create_party(name: str) -> Party:

@@ -98,6 +98,20 @@ def test_http_endpoints():
     assert client.get(f"/api/party/{created['code']}/chalet/nope/clip").status_code == 404
 
 
+@pytest.mark.parametrize("nom", [
+    "Anniv", "Les 40 ans de Silou",
+    "40 ans de Silou version test",          # la troncature tombait sur un tiret
+    "Soirée chez Marie et Jean-Baptiste du 3 octobre",
+    "  ", "!!!", "Ééé àà ûû", "a" * 80,
+])
+def test_created_party_is_always_findable(nom):
+    """Le bug de Sylvain : l'identifiant doit se retrouver quel que soit le nom."""
+    party = main.create_party(nom)
+    assert main.get_party(party.code) is party
+    assert main.slug(party.code) == party.code   # stable par normalisation
+    assert "--" not in party.code
+
+
 def test_party_ids_are_unguessable_and_unique():
     a = main.create_party("Anniv Sylvain")
     b = main.create_party("Anniv Sylvain")

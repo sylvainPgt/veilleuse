@@ -73,10 +73,13 @@
 
   // L'identifiant vit dans le fragment (#...) : il ne part donc ni dans les journaux
   // du serveur ni dans l'en-tête Referer quand quelqu'un suit un lien depuis la page.
+  // On accepte aussi bien le lien nu que le message de partage entier collé.
   const codeFromLink = (v) => {
     const s = String(v || "").trim();
-    const m = s.match(/#([a-z0-9-]+)\s*$/i) || s.match(/^([a-z0-9-]+)$/i);
-    return m ? m[1].toLowerCase() : "";
+    const all = s.match(/#([a-z0-9-]{4,})/gi);
+    if (all) return all[all.length - 1].slice(1).toLowerCase();
+    const bare = s.match(/^([a-z0-9-]+)$/i);
+    return bare ? bare[1].toLowerCase() : "";
   };
   const linkFor = (code) => `${location.origin}/#${code}`;
 
@@ -427,7 +430,7 @@
   //  RÉCEPTEUR (salle) & ÉCRAN SONO
   // ============================================================
   const salle = {
-    state: null, prev: {}, armed: false, audio: null, ownId: store.get("own", ""), tickTimer: null, remindTimer: null, serverOffset: 0, awaitingClip: null,
+    state: null, prev: {}, armed: false, audio: null, ownId: store.get("own", ""), tickTimer: null, remindTimer: null, serverOffset: 0, awaitingClip: null, partyName: "",
     stop() { clearInterval(this.tickTimer); clearInterval(this.remindTimer); this.state = null; this.prev = {}; $("overlay").classList.add("hidden"); },
   };
 
@@ -478,6 +481,13 @@
       return;
     }
     if (m.type !== "state") return;
+    // Le vrai nom vient du serveur : un invité ne l'a pas, il n'a que le lien.
+    if (m.name && m.name !== salle.partyName) {
+      salle.partyName = m.name;
+      $("salle-code").textContent = `Soirée « ${m.name} »`;
+      $("empty-code").textContent = m.name;
+      if (!isSono) recent.add(session.code, m.name);
+    }
     salle.serverOffset = m.now - Date.now() / 1000;
     salle.state = m;
     // Détection des transitions pour notifier
