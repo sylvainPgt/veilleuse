@@ -9,6 +9,7 @@ reconnexion, donc un redémarrage du serveur n'est pas dramatique.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -49,6 +50,60 @@ ADMIN_TOKEN = os.getenv("VEILLEUSE_ADMIN_TOKEN", "")                        # vi
 SECRET = os.getenv("VEILLEUSE_SECRET", "") or secrets.token_hex(32)
 if not os.getenv("VEILLEUSE_SECRET"):
     log.warning("VEILLEUSE_SECRET absent : les liens de soirée ne survivront pas à un redémarrage")
+
+# --- Web Push -----------------------------------------------------------------
+# Les clés VAPID sont dérivées de VEILLEUSE_SECRET : rien de plus à configurer, et
+# elles restent stables tant que le secret l'est — condition pour que les
+# abonnements des téléphones survivent aux redémarrages.
+try:
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from pywebpush import WebPushException, webpush
+
+    _P256_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+    _priv_int = int.from_bytes(hashlib.sha256(f"vapid:{SECRET}".encode()).digest(), "big") % (_P256_ORDER - 1) + 1
+    _pub = ec.derive_private_key(_priv_int, ec.SECP256R1()).public_key().public_numbers()
+    _b64u = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+    VAPID_PUBLIC = _b64u(b"\x04" + _pub.x.to_bytes(32, "big") + _pub.y.to_bytes(32, "big"))
+    VAPID_PRIVATE = _b64u(_priv_int.to_bytes(32, "big"))
+    PUSH_ENABLED = True
+except Exception:  # noqa: BLE001 — sans pywebpush, l'app marche, juste sans push
+    PUSH_ENABLED = False
+    VAPID_PUBLIC = ""
+    webpush = WebPushException = None
+
+VAPID_CLAIMS = {"sub": "mailto:veilleuse@40ansdesilou.fr"}
+
+
+def _push_one(sub: dict[str, Any], payload: str) -> None:
+    webpush(subscription_info=sub, data=payload, ttl=180,
+            vapid_private_key=VAPID_PRIVATE, vapid_claims=dict(VAPID_CLAIMS))
+
+
+async def push_party(party: "Party", title: str, body: str, tag: str) -> None:
+    """Pousse une notification à tous les abonnés de la soirée. Les abonnements
+    morts (désinscription, app réinstallée) sont élagués au passage."""
+    if not PUSH_ENABLED or not party.push_subs:
+        return
+    payload = json.dumps({"title": title, "body": body, "tag": tag})
+    dead = []
+    for endpoint, entry in list(party.push_subs.items()):
+        try:
+            await asyncio.to_thread(_push_one, entry["sub"], payload)
+        except WebPushException as exc:
+            resp = getattr(exc, "response", None)
+            if resp is not None and resp.status_code in (403, 404, 410):
+                dead.append(endpoint)
+        except Exception:  # noqa: BLE001
+            log.exception("push")
+    for endpoint in dead:
+        party.push_subs.pop(endpoint, None)
+
+
+async def drain_pushes(party: "Party") -> None:
+    while party.push_queue:
+        title, body, tag = party.push_queue.pop(0)
+        await push_party(party, title, body, tag)
+
 
 # Garde-fous contre l'épuisement mémoire : la création de soirée est publique.
 MAX_PARTIES = int(os.getenv("VEILLEUSE_MAX_PARTIES", "300"))
@@ -167,6 +222,8 @@ class Party:
         self.created = now()
         self.last_activity = now()
         self.rev = 0
+        self.push_subs: dict[str, dict[str, Any]] = {}   # endpoint → {sub}
+        self.push_queue: list[tuple[str, str, str]] = []  # (titre, corps, tag) à pousser
 
     # -- événements / état ---------------------------------------------------
     def add_event(self, kind: str, chalet: Chalet | None = None, **extra: Any) -> dict[str, Any]:
@@ -246,6 +303,8 @@ class Party:
                         "escalated": False, "clip": clip, "clip_ts": now() if clip else None,
                         "level": chalet.level, "reason": reason}
         self.add_event("alert", chalet, level=chalet.level, reason=reason)
+        titre = "Test — " + chalet.name if reason == "test" else "Ça sonne — " + chalet.name
+        self.push_queue.append((titre, chalet.kids or "", "veilleuse-" + chalet.id))
 
     def attach_alert_clip(self, chalet: Chalet, clip: str | None) -> None:
         """Le clip arrive quelques secondes après l'alerte. S'il n'y a plus d'alerte
@@ -288,6 +347,9 @@ class Party:
             if chalet.online and chalet.last_hb and t - chalet.last_hb > HEARTBEAT_TIMEOUT:
                 chalet.online = False
                 self.add_event("offline", chalet)
+                self.push_queue.append(("Chalet muet — " + chalet.name,
+                                        "Plus de nouvelles du babyphone. " + (chalet.kids or ""),
+                                        "veilleuse-" + chalet.id))
                 changed = True
             if chalet.listen_at and t - chalet.listen_at > LISTEN_HOLD:
                 chalet.listen_by = chalet.listen_at = None
@@ -305,6 +367,9 @@ class Party:
             if a and not a["acked_by"] and not a["escalated"] and t - a["started"] > ESCALATION_DELAY:
                 a["escalated"] = True
                 self.add_event("escalated", chalet)
+                self.push_queue.append(("Personne n'a répondu — " + chalet.name,
+                                        "L'alerte sonne sans réponse. " + (chalet.kids or ""),
+                                        "veilleuse-" + chalet.id))
                 changed = True
         return changed
 
@@ -366,6 +431,7 @@ async def watchdog_loop() -> None:
             try:
                 if party.watchdog():
                     await party.broadcast()
+                await drain_pushes(party)
             except Exception:  # noqa: BLE001
                 log.exception("watchdog")
 
@@ -406,6 +472,13 @@ async def party_create(body: dict[str, Any]) -> dict[str, Any]:
     if party is None:
         return JSONResponse({"error": "server full"}, status_code=503)
     return {"code": party.code, "name": party.name}
+
+
+@app.get("/api/push-key")
+async def push_key():
+    if not PUSH_ENABLED:
+        return JSONResponse({"error": "push disabled"}, status_code=404)
+    return {"key": VAPID_PUBLIC}
 
 
 @app.get("/api/party/{code}")
@@ -454,6 +527,7 @@ async def websocket_endpoint(ws: WebSocket, code: str) -> None:
                 continue
             if await handle_message(party, ws, meta, msg):
                 await party.broadcast()
+            await drain_pushes(party)
     except WebSocketDisconnect:
         pass
     except Exception:  # noqa: BLE001
@@ -541,6 +615,16 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
         else:
             await party.broadcast({"type": "listen_failed", "chalet_id": chalet.id,
                                    "reason": "Le réseau n'a pas laissé passer l'enregistrement."})
+        return False
+
+    if kind == "push_sub":  # récepteur : « voici où me pousser les notifications »
+        sub = msg.get("sub")
+        if not (PUSH_ENABLED and isinstance(sub, dict)):
+            return False
+        endpoint = str(sub.get("endpoint") or "")
+        if (endpoint.startswith("https://")
+                and len(json.dumps(sub)) < 2000 and len(party.push_subs) < MAX_SOCKETS):
+            party.push_subs[endpoint] = {"sub": sub}
         return False
 
     if kind == "ping":

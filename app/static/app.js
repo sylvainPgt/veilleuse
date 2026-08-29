@@ -512,7 +512,10 @@
     $("empty-code").textContent = known?.name || "";
     if (isSono) { $("salle-armed").classList.remove("hidden"); keepAwake(); }
     net.hello = { type: "hello", role: "salle", name: session.name || (isSono ? "écran sono" : "") };
-    net.onConn = (ok) => { const p = $("salle-conn"); p.textContent = ok ? "● connecté" : "○ reconnexion…"; p.className = "pill " + (ok ? "ok" : "bad"); };
+    net.onConn = (ok) => {
+      const p = $("salle-conn"); p.textContent = ok ? "● connecté" : "○ reconnexion…"; p.className = "pill " + (ok ? "ok" : "bad");
+      if (ok) push.announce();   // le serveur repart parfois de zéro : on se réabonne à chaque connexion
+    };
     net.onMessage = onSalleMessage;
     net.onUnknown = onUnknownParty;
     net.connect();
@@ -528,10 +531,11 @@
     let perm = "none";
     try { if ("Notification" in window) perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission; } catch { /* ignore */ }
     salle.armed = true; $("salle-armed").classList.add("hidden");
-    // Dire la vérité : la sonnerie vient de cette page. Suspendue par le téléphone,
-    // elle ne peut plus rien promettre — la notification est un filet, pas une garantie.
+    await push.setup();
     toast(perm === "granted"
-      ? "Alertes activées. Gardez cette page ouverte : c'est elle qui sonne. Écran éteint, une notification tentera de vous prévenir, sans garantie — l'écran de la sono reste le filet de sécurité."
+      ? (push.sub
+        ? "Alertes activées. Les notifications arriveront même téléphone verrouillé — gardez quand même la page ouverte, c'est elle qui sonne fort."
+        : "Alertes activées. Gardez cette page ouverte : c'est elle qui sonne. Sur iPhone, ajoutez Veilleuse à l'écran d'accueil pour recevoir aussi les notifications.")
       : "Alertes sonores activées. Notifications refusées : gardez cette page ouverte et l'écran allumé pour être prévenu.", 8000);
   });
   $("btn-fullscreen").addEventListener("click", () => { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {}); });
@@ -589,6 +593,43 @@
     navigator.serviceWorker?.getRegistration()
       .then((reg) => reg?.showNotification ? reg.showNotification(title, opts) : new Notification(title, opts))
       .catch(() => { try { new Notification(title, opts); } catch { /* tant pis */ } });
+  }
+
+  // ---------- notifications poussées (Web Push) ----------
+  // Le serveur pousse l'alerte jusqu'au téléphone via Google/Apple : ça sonne même
+  // app fermée. La page ouverte reste le chemin principal, ceci est le filet.
+  const push = {
+    key: null, sub: null,
+    async setup() {
+      if (isSono || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      try {
+        if (this.key === null) {
+          const r = await fetch("/api/push-key");
+          this.key = r.ok ? (await r.json()).key : "";
+        }
+        if (!this.key) return;
+        const reg = await navigator.serviceWorker.ready;
+        try {
+          this.sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(this.key) });
+        } catch {
+          // abonnement existant lié à une ancienne clé : on repart proprement
+          const old = await reg.pushManager.getSubscription();
+          if (old) await old.unsubscribe();
+          this.sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(this.key) });
+        }
+        this.announce();
+      } catch { /* pas de push ici : la page ouverte sonne déjà */ }
+    },
+    // Le serveur ne garde rien : on lui redonne l'abonnement à chaque connexion.
+    announce() {
+      if (this.sub) net.send({ type: "push_sub", sub: this.sub.toJSON() }, { queueIfOffline: false });
+    },
+  };
+  function b64ToBytes(s) {
+    const pad = "=".repeat((4 - (s.length % 4)) % 4);
+    const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
   }
 
   // Rappel périodique tant qu'une alerte n'est pas acquittée (plus fort si c'est la mienne ou si escalade)

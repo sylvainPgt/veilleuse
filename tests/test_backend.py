@@ -204,6 +204,62 @@ def test_state_revision_is_monotonic():
     assert revs == sorted(revs) and len(set(revs)) == 3
 
 
+def test_push_key_and_subscription():
+    """Web Push : la clé publique est servie, l'abonnement est rangé et validé."""
+    assert main.PUSH_ENABLED
+    with TestClient(app) as client:
+        assert client.get("/api/push-key").json()["key"] == main.VAPID_PUBLIC
+        code = main.create_party("push").code
+        with client.websocket_connect(f"/ws/{code}") as ws:
+            recv_until(ws, "state")
+            ws.send_json({"type": "push_sub", "sub": {"endpoint": "https://fcm.example/abc", "keys": {"p256dh": "x", "auth": "y"}}})
+            ws.send_json({"type": "push_sub", "sub": {"endpoint": "http://pas-https/refusé"}})
+            ws.send_json({"type": "push_sub", "sub": "n'importe quoi"})
+            ws.send_json({"type": "ping"}); recv_until(ws, "pong", limit=8)
+        subs = main.parties[code].push_subs
+        assert list(subs) == ["https://fcm.example/abc"]
+
+
+def test_alerts_queue_pushes():
+    """Alerte, chalet muet et escalade mettent chacun une notification en file."""
+    p = Party("test")
+    c = p.register_chalet("m", "Mésange", "Léo et Jade")
+    p.heartbeat(c, 5, None, None)
+    p.raise_alert(c, 90, None)
+    assert p.push_queue[-1][0] == "Ça sonne — Mésange" and "Léo" in p.push_queue[-1][1]
+    c.last_hb -= main.HEARTBEAT_TIMEOUT + 1
+    c.alert["started"] -= main.ESCALATION_DELAY + 1
+    p.watchdog()
+    titres = [t for t, _, _ in p.push_queue]
+    assert any(t.startswith("Chalet muet") for t in titres)
+    assert any(t.startswith("Personne n'a répondu") for t in titres)
+    # une alerte fusionnée (déjà en cours) ne repousse pas de notification
+    n = len(p.push_queue)
+    p.raise_alert(c, 95, None)
+    assert len(p.push_queue) == n
+
+
+def test_dead_push_subscriptions_are_pruned(monkeypatch):
+    import asyncio as aio
+    p = Party("test")
+    p.push_subs = {"https://ok/1": {"sub": {"endpoint": "https://ok/1"}},
+                   "https://gone/2": {"sub": {"endpoint": "https://gone/2"}}}
+    sent = []
+
+    class FakeResp:
+        status_code = 410
+
+    def fake_push(sub, payload):
+        if sub["endpoint"].startswith("https://gone"):
+            raise main.WebPushException("gone", response=FakeResp())
+        sent.append(sub["endpoint"])
+
+    monkeypatch.setattr(main, "_push_one", fake_push)
+    aio.run(main.push_party(p, "titre", "corps", "tag"))
+    assert sent == ["https://ok/1"]
+    assert list(p.push_subs) == ["https://ok/1"]   # l'abonnement mort est élagué
+
+
 def test_admin_requires_token(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr(main, "ADMIN_TOKEN", "")
