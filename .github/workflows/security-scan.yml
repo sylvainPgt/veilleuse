@@ -1,0 +1,70 @@
+name: Scan sécurité hebdomadaire
+
+on:
+  schedule:
+    - cron: "0 6 * * 6"   # samedi 06:00 UTC
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  issues: write
+
+jobs:
+  secrets:
+    name: Recherche de secrets (historique complet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # indispensable : sinon seul le dernier commit est scanné
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependances-python:
+    name: Audit des dépendances Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer pip-audit
+        run: pip install pip-audit
+
+      - name: Auditer
+        run: |
+          if [ -f requirements.txt ]; then
+            pip-audit -r requirements.txt --desc
+          elif [ -f pyproject.toml ]; then
+            pip-audit --desc
+          else
+            echo "Aucun manifeste Python trouvé, rien à auditer."
+          fi
+
+  dependances-node:
+    name: Audit des dépendances Node
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Deux des quatre applications du VPS sont en Node (Next.js/vinext, Astro).
+      # `npm audit` lit le lockfile : pas besoin d'installer les paquets.
+      - name: Auditer
+        run: |
+          if [ -f package-lock.json ]; then
+            npm audit --audit-level=high || echo "::warning::npm audit a remonté des vulnérabilités"
+          else
+            echo "Aucun package-lock.json, rien à auditer."
+          fi
