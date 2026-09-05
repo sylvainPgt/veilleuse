@@ -380,6 +380,12 @@ class Party:
 
 parties: dict[str, Party] = {}
 
+# Pierres tombales : une soirée supprimée par l'admin ne doit pas être ressuscitée
+# par son lien signé. En mémoire comme le reste — un redémarrage les efface, et le
+# lien redevient alors valide : la révocation vraiment définitive, c'est changer
+# VEILLEUSE_SECRET (ce qui invalide tous les liens).
+deleted_codes: set[str] = set()
+
 
 def cleanup_parties() -> bool:
     """Oublie les soirées mortes : sans personne de connecté, une soirée jamais
@@ -407,6 +413,8 @@ def get_party(code: str) -> Party | None:
     On tente la clé telle quelle avant de la normaliser : un identifiant valide ne
     doit jamais dépendre des transformations de slug()."""
     party = parties.get(code) or parties.get(slug(code))
+    if code in deleted_codes or slug(code) in deleted_codes:
+        return None
     if party is None and id_is_signed(code) and len(parties) < MAX_PARTIES:
         party = Party(code, name_from_id(code))
         parties[code] = party
@@ -682,9 +690,12 @@ async def admin_parties(request: Request):
 async def admin_delete(request: Request, code: str):
     if (refus := admin_guard(request)) is not None:
         return refus
-    party = parties.pop(slug(code), None)
+    party = parties.pop(slug(code), None) or parties.pop(code, None)
     if party is None:
         return JSONResponse({"error": "unknown party"}, status_code=404)
+    deleted_codes.add(party.code)
+    if len(deleted_codes) > 500:   # borné, comme tout le reste de la mémoire
+        deleted_codes.pop()
     for ws in list(party.sockets):       # on ferme aussi les connexions en cours
         try:
             await ws.close()

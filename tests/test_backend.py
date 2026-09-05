@@ -11,8 +11,10 @@ from app.main import Party, app, parties
 @pytest.fixture(autouse=True)
 def _clean():
     parties.clear()
+    main.deleted_codes.clear()
     yield
     parties.clear()
+    main.deleted_codes.clear()
 
 
 def recv_until(sock, kind: str, limit: int = 8) -> dict:
@@ -272,6 +274,11 @@ def test_admin_requires_token(monkeypatch):
     assert ok.status_code == 200 and any(p["code"] == party.code for p in ok.json()["parties"])
     assert client.delete(f"/api/admin/party/{party.code}", headers={"X-Admin-Token": "s3cret"}).status_code == 200
     assert party.code not in main.parties
+    # le lien signé ne ressuscite pas une soirée supprimée par l'admin…
+    assert main.get_party(party.code) is None
+    # …sauf après un redémarrage du serveur, qui efface les pierres tombales
+    main.deleted_codes.clear()
+    assert main.get_party(party.code) is not None
 
 
 def test_admin_brute_force_is_throttled(monkeypatch):

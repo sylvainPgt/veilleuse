@@ -266,11 +266,14 @@
 
   function stopEverything() { detector.stop(); net.close(); salle.stop(); tab.del("resume"); }
 
-  // Lien périmé ou mal recopié : on le dit, au lieu de laisser tourner un tableau vide.
+  // Lien périmé, mal recopié, ou soirée supprimée par l'organisateur : on le dit,
+  // et on retire la puce locale — elle ne mène plus nulle part.
   function onUnknownParty() {
+    if (session.code) recent.forget(session.code);
     stopEverything();
     show("home");
-    toast("Cette soirée n'existe pas ou a expiré. Demandez le lien à l'organisateur.", 7000);
+    loadParties();
+    toast("Cette soirée n'existe plus. Demandez le lien à l'organisateur.", 7000);
   }
 
   // ============================================================
