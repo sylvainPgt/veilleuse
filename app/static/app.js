@@ -12,6 +12,13 @@
     get: (k, d) => { try { return JSON.parse(localStorage.getItem("veilleuse." + k)) ?? d; } catch { return d; } },
     set: (k, v) => { try { localStorage.setItem("veilleuse." + k, JSON.stringify(v)); } catch { /* privé */ } },
   };
+  // Mémoire de l'onglet : survit au rechargement, pas à la fermeture — la bonne
+  // portée pour « reprendre son rôle » sans ressusciter une vieille session.
+  const tab = {
+    get: (k, d) => { try { return JSON.parse(sessionStorage.getItem("veilleuse." + k)) ?? d; } catch { return d; } },
+    set: (k, v) => { try { sessionStorage.setItem("veilleuse." + k, JSON.stringify(v)); } catch { /* privé */ } },
+    del: (k) => { try { sessionStorage.removeItem("veilleuse." + k); } catch { /* ignore */ } },
+  };
   let toastTimer;
   const toast = (msg, ms = 2500) => { const t = $("toast"); t.textContent = msg; t.classList.remove("hidden"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add("hidden"), ms); };
   const fmtAgo = (s) => s < 60 ? `${Math.max(0, Math.round(s))} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60).toString().padStart(2, "0")}`;
@@ -125,8 +132,11 @@
       return list;
     },
     add(code, name) {
-      const list = recent.all().filter((p) => p.code !== code);
-      list.unshift({ code, name: name || code, ts: Date.now() });
+      // Dédoublonne aussi par nom : recréer « Soirée Test » trois fois faisait
+      // trois puces identiques à l'écran — seule la plus récente compte.
+      const n = name || code;
+      const list = recent.all().filter((p) => p.code !== code && p.name !== n);
+      list.unshift({ code, name: n, ts: Date.now() });
       store.set("recent", list.slice(0, 6));
     },
     forget(code) { store.set("recent", recent.all().filter((p) => p.code !== code)); },
@@ -254,7 +264,7 @@
   }
   document.querySelectorAll("[data-back]").forEach((b) => b.addEventListener("click", () => { stopEverything(); show("home"); }));
 
-  function stopEverything() { detector.stop(); net.close(); salle.stop(); }
+  function stopEverything() { detector.stop(); net.close(); salle.stop(); tab.del("resume"); }
 
   // Lien périmé ou mal recopié : on le dit, au lieu de laisser tourner un tableau vide.
   function onUnknownParty() {
@@ -371,6 +381,7 @@
 
   function startChaletRun() {
     session.role = "chalet";
+    tab.set("resume", { role: "chalet", code: session.code });
     $("run-chalet").textContent = chalet.name; $("run-kids").textContent = chalet.kids; $("run-thr").style.left = chalet.threshold + "%";
     show("chalet-run");
     keepAwake().then((ok) => {
@@ -506,6 +517,7 @@
 
   function startSalle() {
     session.role = "salle";
+    if (!isSono) tab.set("resume", { role: "salle", code: session.code });
     show("salle");
     const known = recent.all().find((p) => p.code === session.code);
     $("salle-code").textContent = known ? `Soirée « ${known.name} »` : "Soirée";
@@ -514,7 +526,7 @@
     net.hello = { type: "hello", role: "salle", name: session.name || (isSono ? "écran sono" : "") };
     net.onConn = (ok) => {
       const p = $("salle-conn"); p.textContent = ok ? "● connecté" : "○ reconnexion…"; p.className = "pill " + (ok ? "ok" : "bad");
-      if (ok) push.announce();   // le serveur repart parfois de zéro : on se réabonne à chaque connexion
+      if (ok) push.recover();   // le serveur repart parfois de zéro : on lui redonne l'abonnement
     };
     net.onMessage = onSalleMessage;
     net.onUnknown = onUnknownParty;
@@ -624,6 +636,17 @@
     // Le serveur ne garde rien : on lui redonne l'abonnement à chaque connexion.
     announce() {
       if (this.sub) net.send({ type: "push_sub", sub: this.sub.toJSON() }, { queueIfOffline: false });
+    },
+    // Après un rechargement, l'abonnement existe déjà dans le navigateur : on le
+    // retrouve sans redemander de geste, pour que le push survive à la reprise.
+    async recover() {
+      if (this.sub || isSono || !("serviceWorker" in navigator) || !("PushManager" in window)) return this.announce();
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        this.sub = await reg.pushManager.getSubscription();
+      } catch { /* pas de push ici */ }
+      this.announce();
     },
   };
   function b64ToBytes(s) {
@@ -789,11 +812,34 @@
   }
 
   // ---------- démarrage automatique ----------
+  // Recharger la page ne doit pas renvoyer à l'accueil : on reprend le rôle de
+  // l'onglet, sauf si un lien vers une AUTRE soirée vient d'être suivi.
+  async function resumeChalet(saved) {
+    chalet.id = saved.deviceId; chalet.name = saved.name || "Chalet";
+    chalet.kids = saved.kids || ""; chalet.threshold = saved.threshold || 55;
+    const ok = await detector.start();   // permission déjà accordée : repart sans geste
+    startChaletRun();
+    if (!ok) onMicState("ended");        // sinon : « Micro coupé », bouton pour le relancer
+    else toast("Veilleuse relancée après le rechargement");
+  }
+
   const linkCode = codeFromLink(location.hash);
+  const resumed = tab.get("resume", null);
   if (isSono) {
     session.code = linkCode;
     session.name = "écran sono";
     if (session.code) startSalle(); else show("home");
+  } else if (resumed?.code && (!linkCode || linkCode === resumed.code)) {
+    session.code = resumed.code;
+    session.name = store.get("name", "");
+    chosenRole = resumed.role;
+    if (resumed.role === "chalet") {
+      const saved = store.get("chalet", {});
+      if (saved.deviceId && saved.name) resumeChalet(saved);
+      else { tab.del("resume"); if (linkCode) applyLinkCode(linkCode); }
+    } else {
+      startSalle();   // la carte « Activer les alertes » réapparaît : le son exige un geste
+    }
   } else if (linkCode) {
     applyLinkCode(linkCode);   // arrivée par le lien : il ne reste qu'à choisir son rôle
   }

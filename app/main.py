@@ -74,9 +74,13 @@ except Exception:  # noqa: BLE001 — sans pywebpush, l'app marche, juste sans p
 VAPID_CLAIMS = {"sub": "mailto:veilleuse@40ansdesilou.fr"}
 
 
-def _push_one(sub: dict[str, Any], payload: str) -> None:
+def _push_one(sub: dict[str, Any], payload: str, tag: str) -> None:
+    # Urgency: high — sans elle, Android en économie d'énergie (écran éteint, Doze)
+    # retarde ou groupe la livraison : c'est exactement le symptôme observé au test.
+    # Topic : une nouvelle alerte du même chalet remplace la précédente en attente.
     webpush(subscription_info=sub, data=payload, ttl=180,
-            vapid_private_key=VAPID_PRIVATE, vapid_claims=dict(VAPID_CLAIMS))
+            vapid_private_key=VAPID_PRIVATE, vapid_claims=dict(VAPID_CLAIMS),
+            headers={"Urgency": "high", "Topic": re.sub(r"[^A-Za-z0-9_-]", "", tag)[:32]})
 
 
 async def push_party(party: "Party", title: str, body: str, tag: str) -> None:
@@ -88,7 +92,7 @@ async def push_party(party: "Party", title: str, body: str, tag: str) -> None:
     dead = []
     for endpoint, entry in list(party.push_subs.items()):
         try:
-            await asyncio.to_thread(_push_one, entry["sub"], payload)
+            await asyncio.to_thread(_push_one, entry["sub"], payload, tag)
         except WebPushException as exc:
             resp = getattr(exc, "response", None)
             if resp is not None and resp.status_code in (403, 404, 410):

@@ -249,7 +249,7 @@ def test_dead_push_subscriptions_are_pruned(monkeypatch):
     class FakeResp:
         status_code = 410
 
-    def fake_push(sub, payload):
+    def fake_push(sub, payload, tag):
         if sub["endpoint"].startswith("https://gone"):
             raise main.WebPushException("gone", response=FakeResp())
         sent.append(sub["endpoint"])
