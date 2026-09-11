@@ -92,6 +92,8 @@ Veilleuse entend, elle ne voit pas : elle détecte les pleurs et les bruits, com
 
 **Watchdog serveur.** Toutes les 2 secondes : un chalet sans heartbeat depuis 45 s devient « muet » ; une alerte non acquittée depuis 90 s passe en « escalade ». Les deux délais se règlent par variables d'environnement (`VEILLEUSE_HEARTBEAT_TIMEOUT`, `VEILLEUSE_ESCALATION_DELAY`).
 
+**Un seul processus, une seule instance.** L'état vit dans le processus (assisté du fichier ci-dessous) : lancez Uvicorn **sans** `--workers` et gardez **une** réplique du conteneur — plusieurs instances se partageraient les soirées sans se voir. `GET /api/health` expose `persistence` (`ok` / `error` / `off`) : une persistance en panne n'est jamais silencieuse. Au redémarrage, un chalet attendu qui ne revient pas dans `VEILLEUSE_REVIVE_GRACE` (2 min) est poussé « chalet muet » — un serveur éteint, lui, ne peut rien pousser : il prévient à son retour.
+
 **Persistance minimale, jamais d'audio.** Un petit fichier JSON local (`VEILLEUSE_STATE_FILE`, `data/state.json` par défaut, vide pour désactiver) garde le strict nécessaire à la reprise : soirées, chalets attendus, alertes en cours **sans leur clip**, abonnements push, suppressions admin. Les clips audio, eux, ne touchent jamais le disque : effacés à la résolution et au bout de deux minutes (`VEILLEUSE_CLIP_TTL`), API servie en `no-store`. Les soirées s'oublient toutes seules (15 min si vide — `VEILLEUSE_PARTY_EMPTY_TTL` —, 24 h sans activité — `VEILLEUSE_PARTY_TTL`) et le fichier suit. En Docker, montez un volume sur `/srv/data` (sur Coolify : « persistent storage »).
 
 **Un redémarrage du serveur est un non-événement.** Les identifiants de soirée sont signés (HMAC) avec `VEILLEUSE_SECRET` et l'état est rechargé depuis le fichier : les chalets attendus réapparaissent — **« muets », honnêtement, jusqu'au retour de leur heartbeat** — et une alerte en cours reprend là où elle en était. **Définissez `VEILLEUSE_SECRET`** (une longue valeur aléatoire) en production : sans elle, liens et abonnements push meurent avec le processus.
@@ -102,7 +104,7 @@ Veilleuse entend, elle ne voit pas : elle détecte les pleurs et les bruits, com
 
 | Sens | Message | Rôle |
 |---|---|---|
-| → | `{"type":"register","chalet_id","name","kids","token?"}` | Émetteur : rejoint un chalet ; le reprendre exige le jeton reçu à la première inscription (`registered` le contient, `register_denied` sinon) |
+| → | `{"type":"register","chalet_id","name","kids","token?"}` | Émetteur : rejoint un chalet ; le reprendre exige le jeton reçu à la première inscription (`registered` le contient, `register_denied` sinon). Un seul émetteur courant : l'ancienne connexion reçoit `superseded` et n'émet plus |
 | → | `{"type":"hb","level","battery","threshold"}` | Émetteur : battement de cœur |
 | → | `{"type":"noise","level"}` | Émetteur : bruit court |
 | → | `{"type":"alert","level","clip?","reason?"}` | Émetteur : alerte (le clip peut arriver dans un second message) |

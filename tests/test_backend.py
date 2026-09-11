@@ -58,9 +58,9 @@ def test_alert_lifecycle():
     p.raise_alert(c, 95, "data:audio/webm;base64,AAAA")  # alerte pendant une alerte : fusion, pas de doublon
     assert sum(e["kind"] == "alert" for e in p.events) == 1
     assert c.alert["clip"] and c.alert["level"] == 95
-    p.ack(c, "Marie")
+    p.ack(c, "Marie", aid=c.alert["id"])
     assert c.status() == "acked" and c.alert["acked_by"] == "Marie"
-    p.resolve(c, "Marie")
+    p.resolve(c, "Marie", aid=c.alert["id"])
     assert c.status() == "ok" and c.alert is None
 
 
@@ -149,8 +149,9 @@ def test_first_ack_wins():
     p = Party("test")
     c = p.register_chalet("m", "M", "")
     p.raise_alert(c, 80, None)
-    p.ack(c, "Marie")
-    p.ack(c, "Paul")
+    aid = c.alert["id"]
+    p.ack(c, "Marie", aid=aid)
+    p.ack(c, "Paul", aid=aid)
     assert c.alert["acked_by"] == "Marie"
     assert sum(e["kind"] == "ack" for e in p.events) == 1
 
@@ -160,8 +161,9 @@ def test_late_clip_does_not_resurrect_alert():
     p = Party("test")
     c = p.register_chalet("m", "M", "")
     p.raise_alert(c, 80, None)
-    p.resolve(c, "Marie")
-    p.attach_alert_clip(c, "data:audio/mp4;base64,AAAA")
+    aid = c.alert["id"]
+    p.resolve(c, "Marie", aid=aid)
+    p.attach_alert_clip(c, "data:audio/mp4;base64,AAAA", aid=aid)
     assert c.alert is None
 
 
@@ -302,12 +304,13 @@ def test_release_and_reinforce():
     p = Party("test")
     c = p.register_chalet("m", "Mésange", "")
     p.raise_alert(c, 80, None)
-    p.ack(c, "Marie")
+    aid = c.alert["id"]
+    p.ack(c, "Marie", aid=aid)
     p.push_queue.clear()
-    assert p.reinforce(c, "Marie")
+    assert p.reinforce(c, "Marie", aid=aid)
     assert c.alert["acked_by"] == "Marie"              # le renfort ne libère pas
     assert any("Renfort" in t for t, _, _ in p.push_queue)
-    assert p.release(c, "Marie")
+    assert p.release(c, "Marie", aid=aid)
     assert c.alert["acked_by"] is None and c.status() == "alert"
     # le chrono d'escalade est reparti de la libération
     c.alert["started"] -= main.ESCALATION_DELAY + 1
@@ -319,7 +322,7 @@ def test_ack_reminder_fires_once():
     p = Party("test")
     c = p.register_chalet("m", "Mésange", "")
     p.raise_alert(c, 80, None)
-    p.ack(c, "Marie")
+    p.ack(c, "Marie", aid=c.alert["id"])
     p.push_queue.clear()
     c.alert["acked_at"] -= main.ACK_REMINDER + 1
     assert p.watchdog()
@@ -438,6 +441,180 @@ def test_slow_push_does_not_block_alerts(monkeypatch):
             assert elapsed < 2, f"la diffusion a attendu le push ({elapsed:.1f}s)"
 
 
+# --------- régressions de la contre-revue (branche fiabilisation) ---------
+
+def test_reinforce_and_reminder_are_events_not_statuses():
+    """CR n°1 : renfort et rappel ne changent pas le statut « acked » — ils doivent
+    exister comme événements datés (le client sonne dessus) ET comme push."""
+    p = Party("test")
+    c = p.register_chalet("m", "Mésange", "")
+    p.heartbeat(c, 5, None, None)
+    p.raise_alert(c, 80, None)
+    aid = c.alert["id"]
+    p.ack(c, "Marie", aid=aid)
+    p.push_queue.clear()
+    assert p.reinforce(c, "Marie", aid=aid)
+    assert c.status() == "acked"                          # le statut ne bouge pas…
+    assert p.events[-1]["kind"] == "reinforce"            # …mais l'événement est là, daté
+    assert p.events[-1]["ts"] and p.events[-1]["by"] == "Marie"
+    c.alert["acked_at"] -= main.ACK_REMINDER + 1
+    p.watchdog()
+    assert any(e["kind"] == "ack_reminder" for e in p.events)
+    titres = [t for t, _, _ in p.push_queue]
+    assert any("Renfort" in t for t in titres) and any("Toujours en cours" in t for t in titres)
+
+
+def test_silence_during_acked_alert_is_reported():
+    """CR n°2 : « Marie y va » ne prouve pas que le micro marche — la perte de
+    connexion pendant une prise en charge doit rester distincte et visible."""
+    p = Party("test")
+    c = p.register_chalet("m", "Mésange", "")
+    p.heartbeat(c, 5, None, None)
+    p.raise_alert(c, 80, None)
+    p.ack(c, "Marie", aid=c.alert["id"])
+    p.push_queue.clear()
+    c.last_hb -= main.HEARTBEAT_TIMEOUT + 1
+    assert p.watchdog()
+    d = c.to_dict()
+    assert d["status"] == "acked" and d["online"] is False   # deux informations, pas une
+    assert any(t.startswith("Chalet muet") for t, _, _ in p.push_queue)  # et le push part quand même
+    # le muet acquitté se prend en charge comme les autres
+    assert p.check(c, "Paul") and c.check_by == "Paul"
+
+
+def test_restored_chalet_that_never_returns_is_pushed(tmp_path, monkeypatch):
+    """CR n°3 : après redémarrage, un chalet restauré qui ne revient pas doit
+    produire le push « chalet muet » — il n'y a pourtant aucune transition."""
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(main, "STATE_FILE", str(state))
+    party = main.create_party("reprise")
+    a = party.register_chalet("a", "Revenant", "")
+    b = party.register_chalet("b", "Absent", "")
+    party.heartbeat(a, 5, None, None); party.heartbeat(b, 5, None, None)
+    main.save_state(force=True)
+
+    parties.clear()
+    assert main.load_state() == 1                       # « redémarrage »
+    revived = next(iter(parties.values()))
+    ra, rb = revived.chalets["a"], revived.chalets["b"]
+    assert ra.revive_deadline and rb.revive_deadline
+    revived.heartbeat(ra, 5, None, None)                # seul « Revenant » revient
+    revived.push_queue.clear()
+    rb.revive_deadline -= main.REVIVE_GRACE + 1         # le délai de grâce expire
+    ra_dl = ra.revive_deadline
+    assert revived.watchdog()
+    assert ra_dl is None                                # le revenu n'est plus surveillé
+    absents = [t for t, _, _ in revived.push_queue if t.startswith("Chalet muet")]
+    assert absents == ["Chalet muet — Absent"]          # un seul push, pour le seul absent
+    n = len(revived.push_queue)
+    revived.watchdog()
+    assert len(revived.push_queue) == n                 # et pas de répétition
+
+
+def test_aid_is_mandatory_end_to_end():
+    """CR n°4 : sans aid, une action est refusée (migration explicite) ; un clip
+    corrélé à l'alerte A ne peut pas se retrouver sur l'alerte B."""
+    p = Party("test")
+    c = p.register_chalet("m", "M", "")
+    p.raise_alert(c, 80, None, aid_hint="alerta99")
+    assert c.alert["id"] == "alerta99"                  # l'émetteur fixe l'occurrence dès le départ
+    assert not p.ack(c, "Marie", aid=None)              # aid absent = refusé, plus de tolérance
+    assert not p.resolve(c, "Marie", aid=None)
+    assert not p.release(c, "Marie", aid=None)
+    assert not p.reinforce(c, "Marie", aid=None)
+    assert p.resolve(c, "Marie", aid="alerta99")
+    p.raise_alert(c, 85, None, aid_hint="alertb77")     # B prend la place
+    p.attach_alert_clip(c, "data:audio/mp4;base64,AAAA", aid="alerta99")   # clip de A, tardif
+    assert c.alert["clip"] is None and c.alert["id"] == "alertb77"
+
+
+def test_broadcast_survives_zombie_socket():
+    """CR n°5 : une socket dont close() ne rend jamais la main ne doit pas
+    suspendre broadcast(), donc le watchdog."""
+    import asyncio as aio
+
+    class ZombieWS:
+        async def send_text(self, _):
+            raise RuntimeError("morte")
+        async def close(self):
+            await aio.sleep(999)   # ne termine jamais
+
+    class SaneWS:
+        def __init__(self):
+            self.got = []
+        async def send_text(self, payload):
+            self.got.append(payload)
+        async def close(self):
+            pass
+
+    async def scenario():
+        p = Party("test")
+        sane = SaneWS()
+        p.sockets[ZombieWS()] = {"role": "salle"}
+        p.sockets[sane] = {"role": "salle"}
+        t0 = time.monotonic()
+        await aio.wait_for(p.broadcast({"type": "ping"}), timeout=5)
+        assert time.monotonic() - t0 < 3, "broadcast a attendu la socket zombie"
+        assert sane.got, "le récepteur sain n'a rien reçu"
+        assert sane in p.sockets and len(p.sockets) == 1   # la zombie est éjectée
+
+    aio.run(scenario())
+
+
+def test_register_takeover_demotes_previous_emitter():
+    """CR n°6 : un seul émetteur courant par chalet — l'ancienne socket est démise,
+    prévenue, et ses messages sont refusés."""
+    with TestClient(app) as client:
+        code = main.create_party("relève").code
+        with client.websocket_connect(f"/ws/{code}") as first, client.websocket_connect(f"/ws/{code}") as second:
+            recv_until(first, "state"); recv_until(second, "state")
+            first.send_json({"type": "register", "chalet_id": "m", "name": "Mésange", "kids": ""})
+            token = recv_until(first, "registered")["token"]
+            chalet = main.parties[code].chalets["m"]
+
+            second.send_json({"type": "register", "chalet_id": "m", "name": "Mésange", "kids": "", "token": token})
+            recv_until(second, "registered")
+            assert recv_until(first, "superseded", limit=8)["chalet_id"] == "m"   # l'ancien est prévenu
+
+            first.send_json({"type": "hb", "chalet_id": "m", "level": 9})          # et n'émet plus
+            first.send_json({"type": "ping"}); recv_until(first, "pong", limit=8)
+            assert chalet.online is False
+            second.send_json({"type": "hb", "chalet_id": "m", "level": 9})         # le nouveau, si
+            second.send_json({"type": "ping"}); recv_until(second, "pong", limit=8)
+            assert chalet.online is True
+
+
+def test_push_test_reports_failure(monkeypatch):
+    """CR n°8 : « essai envoyé » seulement si le service de push a accepté."""
+    def broken_push(sub, payload, tag):
+        raise RuntimeError("service indisponible")
+
+    monkeypatch.setattr(main, "_push_one", broken_push)
+    with TestClient(app) as client:
+        code = main.create_party("essai").code
+        with client.websocket_connect(f"/ws/{code}") as ws:
+            recv_until(ws, "state")
+            ep = "https://fcm.googleapis.com/fcm/send/x"
+            ws.send_json({"type": "push_sub", "sub": {"endpoint": ep, "keys": {"p256dh": "x", "auth": "y"}}})
+            recv_until(ws, "push_ok")
+            ws.send_json({"type": "push_test", "endpoint": ep})
+            assert recv_until(ws, "push_test_failed", limit=8)
+
+
+def test_health_exposes_persistence_status(tmp_path, monkeypatch):
+    """CR (déploiement) : une persistance en panne ne doit pas être silencieuse."""
+    client = TestClient(app)
+    assert client.get("/api/health").json()["persistence"] == "off"   # désactivée en tests
+    monkeypatch.setattr(main, "STATE_FILE", str(tmp_path / "s.json"))
+    main.mark_dirty(); assert main.save_state()
+    monkeypatch.setattr(main, "_persist_status", "ok")
+    assert client.get("/api/health").json()["persistence"] == "ok"
+    monkeypatch.setattr(main, "STATE_FILE", str(tmp_path / "nexiste" / "impossible" / "s.json"))
+    monkeypatch.setattr(main.Path, "mkdir", lambda *a, **k: (_ for _ in ()).throw(OSError("interdit")))
+    main.mark_dirty(); assert not main.save_state()
+    assert client.get("/api/health").json()["persistence"] == "error"
+
+
 def test_admin_requires_token(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr(main, "ADMIN_TOKEN", "")
@@ -493,12 +670,13 @@ def test_websocket_flow():
             assert lv["level"] == 20
 
             emitter.send_json({"type": "alert", "level": 90})
-            recv_until_state(receiver, lambda s: s["chalets"][0]["status"] == "alert")
+            st_alert = recv_until_state(receiver, lambda s: s["chalets"][0]["status"] == "alert")
+            aid = st_alert["chalets"][0]["alert"]["id"]
 
-            receiver.send_json({"type": "ack", "chalet_id": "mesange"})
+            receiver.send_json({"type": "ack", "chalet_id": "mesange", "aid": aid})
             recv_until_state(receiver, lambda s: (s["chalets"][0]["alert"] or {}).get("acked_by") == "Marie")
 
-            receiver.send_json({"type": "resolve", "chalet_id": "mesange"})
+            receiver.send_json({"type": "resolve", "chalet_id": "mesange", "aid": aid})
             recv_until_state(receiver, lambda s: s["chalets"][0]["status"] == "ok")
             assert chalet.alert is None
 
@@ -540,12 +718,17 @@ def test_listen_on_demand():
 
 
 def test_on_demand_clip_never_lingers():
-    """Un clip obtenu par « Écouter » ne doit pas survivre, alerte ou non."""
+    """Un clip obtenu par « Écouter » ne survit ni à une résolution ni au TTL —
+    mais une action REFUSÉE (sans alerte, aid périmé) n'a aucun effet secondaire."""
     p = Party("test")
     c = p.register_chalet("m", "M", "")
 
     c.clip = {"data": "x", "ts": time.time(), "by": "Marie"}
-    p.resolve(c, "Marie")  # « C'est réglé » sans alerte en cours
+    assert not p.resolve(c, "Marie", aid="perime9x")   # refusée : rien ne bouge, pas même le clip
+    assert c.clip is not None
+
+    p.raise_alert(c, 80, None)
+    assert p.resolve(c, "Marie", aid=c.alert["id"])    # vraie résolution : le clip part avec
     assert c.clip is None
 
     c.clip = {"data": "x", "ts": time.time(), "by": "Marie"}

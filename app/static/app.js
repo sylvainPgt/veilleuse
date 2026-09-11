@@ -101,8 +101,10 @@
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
     if (wakeLock !== null) keepAwake();
-    // Retour au premier plan : Safari peut avoir suspendu l'AudioContext en douce.
+    // Retour au premier plan : le navigateur peut avoir suspendu les AudioContext
+    // en douce — celui du micro comme celui de la sonnerie de la salle.
     if (detector.ctx && detector.ctx.state === "suspended") detector.ctx.resume().catch(() => {});
+    if (salle.audio && salle.audio.state === "suspended") salle.audio.resume().then(updateSalleStatus).catch(() => {});
   });
 
   // ---------- accueil ----------
@@ -412,23 +414,39 @@
     $("run-msg").textContent = "La veilleuse s'annonce à la soirée.";
     lastFrame = performance.now(); chalet.above = 0;   // pas de temps fantôme compté comme du bruit
 
+    // Le jeton est PROPRE À LA SOIRÉE : rangé sous une clé globale, celui de la
+    // soirée B écrasait celui de A, et revenir à A finissait en register_denied
+    // puis en tuile dupliquée silencieuse.
     net.hello = { type: "register", chalet_id: chalet.id, name: chalet.name, kids: chalet.kids,
-                  token: store.get("chalet", {}).token || undefined };
+                  token: store.get("ctok:" + session.code, undefined) || undefined };
     net.onConn = (ok) => { const p = $("run-conn"); p.textContent = ok ? "● connecté" : "○ reconnexion…"; p.className = "pill " + (ok ? "ok" : "bad"); if (ok) sendHeartbeat(); };
     net.onMessage = (m) => {
       if (m.type === "clip_request") return serveClipRequest(m);
       if (m.type === "registered") {
         chalet.registered = true;
-        store.set("chalet", { ...store.get("chalet", {}), token: m.token });   // le jeton qui prouve « c'est moi »
+        store.set("ctok:" + session.code, m.token);   // le jeton qui prouve « c'est moi », pour CETTE soirée
         net.hello = { ...net.hello, token: m.token };
+        $("btn-retake").classList.add("hidden");
         if (detector.micAlive() && !chalet.alerting) setChaletIdleUi();
+        sendHeartbeat();   // premier battement dès l'inscription confirmée
+        return;
+      }
+      if (m.type === "superseded") {
+        // un autre téléphone (avec le jeton) a repris ce chalet : celui-ci n'émet
+        // plus, et le dit — pas de faux « à l'écoute » sur deux écrans à la fois
+        chalet.registered = false;
+        const st = $("run-status");
+        st.textContent = "Repris par un autre téléphone"; st.className = "run-status alert";
+        $("run-msg").textContent = "Un autre téléphone s'est enregistré pour ce chalet : celui-ci n'émet plus rien.";
+        $("btn-retake").classList.remove("hidden");
         return;
       }
       if (m.type === "register_denied") {
         // le nom est déjà tenu par un autre téléphone (jeton inconnu) : on repart
         // sous un identifiant neuf plutôt que de parler à la place de quelqu'un.
         chalet.id = slug(chalet.name).slice(0, 30) + "-" + Math.random().toString(36).slice(2, 6);
-        store.set("chalet", { ...store.get("chalet", {}), deviceId: chalet.id, token: undefined });
+        store.set("chalet", { ...store.get("chalet", {}), deviceId: chalet.id });
+        store.set("ctok:" + session.code, undefined);
         net.hello = { type: "register", chalet_id: chalet.id, name: chalet.name, kids: chalet.kids };
         net.send(net.hello, { queueIfOffline: false });
         toast("Ce chalet était déjà tenu par un autre téléphone : celui-ci repart sous une nouvelle tuile.", 7000);
@@ -499,7 +517,15 @@
     setChaletIdleUi(); sendHeartbeat(); toast("Micro rétabli");
   });
 
+  $("btn-retake").addEventListener("click", () => {
+    // reprendre la main sur son chalet : ré-inscription avec le jeton — l'autre
+    // téléphone sera démis et prévenu à son tour
+    if (net.send(net.hello, { queueIfOffline: false })) toast("Reprise demandée…");
+    else toast("Hors connexion — réessayez");
+  });
+
   async function sendHeartbeat() {
+    if (!chalet.registered) return;   // démis ou pas encore inscrit : on n'émet pas
     if (!detector.micAlive()) return; // micro mort : on se tait, le serveur passera le chalet en « muet »
     let battery = null;
     try { const b = await navigator.getBattery?.(); if (b) battery = Math.round(b.level * 100); } catch { /* iOS */ }
@@ -527,11 +553,14 @@
 
   async function triggerAlert(level, reason = "noise") {
     chalet.lastAlert = Date.now(); chalet.above = 0;
-    net.send({ type: "alert", chalet_id: chalet.id, level, reason });          // d'abord l'alerte, minuscule
+    // L'occurrence est identifiée ICI, avant l'enregistrement : lire l'identifiant
+    // « courant » quatre secondes plus tard pouvait corréler le clip à l'alerte
+    // suivante si la nôtre venait d'être réglée.
+    const aid = Math.random().toString(36).slice(2, 10);
+    net.send({ type: "alert", chalet_id: chalet.id, level, reason, aid });     // d'abord l'alerte, minuscule
     if (navigator.vibrate) navigator.vibrate(50);
-    const clip = await detector.recordClip(4000);                            // puis le clip si possible
-    // message dédié : s'il arrive après « C'est réglé », il ne doit pas ressusciter l'alerte
-    if (clip) net.send({ type: "alert_clip", chalet_id: chalet.id, clip }, { queueIfOffline: false });
+    const clip = await detector.recordClip(4000);                             // puis le clip si possible
+    if (clip) net.send({ type: "alert_clip", chalet_id: chalet.id, aid, clip }, { queueIfOffline: false });
   }
   // Quelqu'un de la salle demande à entendre ce qui se passe : on enregistre et on renvoie.
   async function serveClipRequest(m) {
@@ -551,9 +580,11 @@
     toast("Transmission testée : la salle sonne. Pour prouver le micro, tapez dans les mains.", 6000);
   });
   $("btn-cancel").addEventListener("click", () => {
-    // liée à l'occurrence en cours : une « fausse alerte » ne peut pas éteindre la suivante
-    sendAction({ type: "resolve", chalet_id: chalet.id, aid: chalet.currentAid || undefined, by: "le chalet" }, "Fausse alerte");
-    toast("Annulation envoyée — l'écran suivra la confirmation de la salle");
+    // liée à l'occurrence en cours : une « fausse alerte » ne peut pas éteindre la suivante.
+    // Et « envoyée » seulement si c'est vrai — sendAction vient peut-être de dire le contraire.
+    if (sendAction({ type: "resolve", chalet_id: chalet.id, aid: chalet.currentAid || undefined, by: "le chalet" }, "Fausse alerte")) {
+      toast("Annulation envoyée — l'écran suivra la confirmation de la salle");
+    }
   });
   $("btn-stop").addEventListener("click", () => { stopEverything(); show("home"); });
 
@@ -561,8 +592,13 @@
   //  RÉCEPTEUR (salle) & ÉCRAN SONO
   // ============================================================
   const salle = {
-    state: null, prev: {}, armed: false, audio: null, ownId: "", tickTimer: null, remindTimer: null, serverOffset: 0, awaitingClip: null, partyName: "",
-    stop() { clearInterval(this.tickTimer); clearInterval(this.remindTimer); this.state = null; this.prev = {}; $("overlay").classList.add("hidden"); },
+    state: null, prev: {}, prevOn: {}, armed: false, audio: null, ownId: "", tickTimer: null, remindTimer: null,
+    serverOffset: 0, awaitingClip: null, partyName: "", lastEventTs: null,
+    stop() {
+      clearInterval(this.tickTimer); clearInterval(this.remindTimer);
+      this.state = null; this.prev = {}; this.prevOn = {}; this.lastEventTs = null;
+      $("overlay").classList.add("hidden");
+    },
   };
 
   function startSalle() {
@@ -648,13 +684,39 @@
       const isOwn = c.id === salle.ownId;
       const newAlert = (c.status === "alert") && (!before || (before !== "alert" && before !== "acked" && before !== "escalated"));
       const escalated = c.status === "escalated" && before !== "escalated";
-      const wentOffline = c.status === "offline" && before && before !== "offline";
+      // La perte de surveillance se juge sur la CONNEXION, pas sur le statut : un
+      // chalet muet pendant une alerte acquittée gardait le statut « acked » et
+      // devenait silencieux sans que personne ne l'entende.
+      const wentSilent = salle.prevOn[c.id] === true && !c.online;
       if (newAlert || escalated) notify(c, escalated || isOwn ? "strong" : "soft", escalated ? "Personne n'a répondu" : "Ça sonne");
-      else if (wentOffline) notify(c, isOwn ? "strong" : "soft", "Chalet muet");
+      else if (wentSilent) notify(c, isOwn ? "strong" : "soft", "Chalet muet");
       salle.prev[c.id] = c.status;
+      salle.prevOn[c.id] = c.online;
     }
-    for (const id of Object.keys(salle.prev)) if (!m.chalets.find((c) => c.id === id)) delete salle.prev[id];
+    for (const id of Object.keys(salle.prev)) if (!m.chalets.find((c) => c.id === id)) { delete salle.prev[id]; delete salle.prevOn[id]; }
+    // Renfort, rappel, libération : des ÉVÉNEMENTS, pas des changements de statut —
+    // sans ça, une page visible (la sono en tête) restait muette, le push étant
+    // par ailleurs avalé quand la soirée est sous les yeux.
+    const evs = m.events || [];
+    if (salle.lastEventTs === null) {
+      salle.lastEventTs = evs.length ? evs[evs.length - 1].ts : 0;   // l'historique d'avant nous ne re-sonne pas
+    } else {
+      for (const ev of evs) if (ev.ts > salle.lastEventTs) handleLiveEvent(ev);
+      if (evs.length) salle.lastEventTs = Math.max(salle.lastEventTs, evs[evs.length - 1].ts);
+    }
     renderOwnSelect(); renderTiles(); renderEvents(); updateOverlay();
+  }
+
+  function handleLiveEvent(ev) {
+    const texts = {
+      reinforce: `Renfort demandé — ${ev.chalet_name} (${ev.by || "quelqu'un"})`,
+      ack_reminder: `Toujours en cours — ${ev.chalet_name} : ${ev.by || "quelqu'un"} n'a pas confirmé « C'est réglé »`,
+      released: `${ev.by || "Quelqu'un"} ne peut plus y aller — ${ev.chalet_name} sonne de nouveau`,
+    };
+    const text = texts[ev.kind];
+    if (!text) return;
+    if (salle.armed) { beep("strong"); navigator.vibrate?.([400, 150, 400]); }
+    toast(text, 7000);
   }
 
   // ---------- l'overlay : UNE source de vérité, pas une course de transitions ----------
@@ -664,32 +726,38 @@
   function emergencies() {
     const now = Date.now() / 1000 + salle.serverOffset;
     return (salle.state?.chalets || []).map((c) => {
-      let prio = 0, ts = now;
-      if (c.status === "escalated") { prio = 5; ts = c.alert.started; }
-      else if (c.status === "alert") { prio = 4; ts = c.alert.started; }
-      else if (c.status === "offline" && c.last_hb && !c.check_by) { prio = 3; ts = c.last_hb; }
-      else if (c.status === "acked") { prio = 2; ts = c.alert.acked_at; }
-      else if (c.status === "offline" && c.last_hb && c.check_by) { prio = 1; ts = c.check_at || c.last_hb; }
-      return { c, prio, ts };
+      // La connexion prime sur la prise en charge : « Marie y va » ne prouve pas
+      // que le micro fonctionne — un chalet muet reste une urgence même acquitté.
+      const silent = !c.online && c.last_hb;
+      let prio = 0, ts = now, kind = "";
+      if (c.status === "escalated") { prio = 5; ts = c.alert.started; kind = "escalated"; }
+      else if (c.status === "alert") { prio = 4; ts = c.alert.started; kind = "alert"; }
+      else if (silent && !c.check_by) { prio = 3; ts = c.last_hb; kind = "silent"; }
+      else if (c.status === "acked") { prio = 2; ts = c.alert.acked_at; kind = "acked"; }
+      else if (silent && c.check_by) { prio = 1; ts = c.check_at || c.last_hb; kind = "checked"; }
+      return { c, prio, ts, kind };
     }).filter((e) => e.prio > 0).sort((a, b) => b.prio - a.prio || a.ts - b.ts);
   }
-  const emKey = (e) => `${e.c.id}|${e.c.status}|${e.c.alert?.id || ""}|${e.c.check_by || ""}`;
-  let ovMuted = null;   // { key, count } posé par « Masquer »
+  const emKey = (e) => `${e.c.id}|${e.kind}|${e.c.alert?.id || ""}|${e.c.check_by || ""}`;
+  let ovMuted = null;   // ensemble des urgences connues au moment du « Masquer »
   let ovCalmSince = 0;  // début de l'affichage d'un état apaisé (confirmation brève)
 
   function updateOverlay() {
     const list = emergencies();
     if (!list.length) { $("overlay").classList.add("hidden"); ovMuted = null; return; }
     const top = list[0];
-    const key = emKey(top);
-    if (ovMuted && ovMuted.key === key && list.length <= ovMuted.count) {
-      $("overlay").classList.add("hidden");   // masqué par l'utilisateur, rien de neuf depuis
-      return;
+    // « Masquer » ne vaut que pour les urgences CONNUES à ce moment-là : toute
+    // urgence nouvelle ou transformée — même moins prioritaire que le sommet —
+    // rouvre l'overlay. Un chalet qui devient muet pendant qu'une alerte masquée
+    // sonne ailleurs ne doit pas passer sous silence.
+    if (ovMuted) {
+      const unknown = list.some((e) => !ovMuted.has(emKey(e)));
+      if (!unknown) { $("overlay").classList.add("hidden"); return; }
+      ovMuted = null;
     }
-    if (ovMuted && (ovMuted.key !== key || list.length > ovMuted.count)) ovMuted = null;
 
     const c = top.c;
-    const calm = c.status === "acked" || (c.status === "offline" && c.check_by);
+    const calm = top.kind === "acked" || top.kind === "checked";
     // Un état apaisé (quelqu'un y va, quelqu'un vérifie) n'OUVRE jamais l'overlay,
     // et ne le prolonge que 5 s en guise de confirmation : le tableau doit
     // redevenir visible pendant l'intervention, sur les téléphones comme à la sono.
@@ -697,31 +765,35 @@
       if ($("overlay").classList.contains("hidden")) return;
       if (!ovCalmSince) ovCalmSince = Date.now();
       if (Date.now() - ovCalmSince > 5000) {
-        ovMuted = { key, count: list.length };
+        ovMuted = new Set(list.map(emKey));
         ovCalmSince = 0;
         $("overlay").classList.add("hidden");
         return;
       }
     } else ovCalmSince = 0;
-    const kicker = c.status === "escalated" ? "Personne n'a répondu"
-      : c.status === "alert" ? "Ça sonne"
-      : c.status === "acked" ? `${c.alert.acked_by} y va`
-      : c.check_by ? `${c.check_by} va vérifier` : "Chalet muet";
+    const kicker = top.kind === "escalated" ? "Personne n'a répondu"
+      : top.kind === "alert" ? "Ça sonne"
+      : top.kind === "silent" ? "Chalet muet"
+      : top.kind === "acked" ? `${c.alert.acked_by} y va`
+      : `${c.check_by} va vérifier`;
     $("ov-kicker").textContent = kicker;
     $("ov-name").textContent = c.name; $("ov-name").dataset.id = c.id;
-    $("ov-name").dataset.aid = c.alert?.id || ""; $("ov-name").dataset.status = c.status;
+    $("ov-name").dataset.aid = c.alert?.id || ""; $("ov-name").dataset.kind = top.kind;
     $("ov-kids").textContent = c.kids || "";
     const nowS = Date.now() / 1000 + salle.serverOffset;
-    $("ov-since").textContent = c.alert
-      ? (c.alert.acked_by ? `${c.alert.acked_by} y va depuis ${fmtAgo(nowS - c.alert.acked_at)}`
-                          : `sonne depuis ${fmtAgo(nowS - c.alert.started)}`)
-      : (c.last_hb ? `plus de nouvelles depuis ${fmtAgo(nowS - c.last_hb)}` : "");
+    $("ov-since").textContent = (top.kind === "silent" || top.kind === "checked")
+      ? `plus de nouvelles depuis ${fmtAgo(nowS - c.last_hb)}`
+        + (c.alert?.acked_by ? ` · ${c.alert.acked_by} y allait` : "")
+      : c.alert
+        ? (c.alert.acked_by ? `${c.alert.acked_by} y va depuis ${fmtAgo(nowS - c.alert.acked_at)}`
+                            : `sonne depuis ${fmtAgo(nowS - c.alert.started)}`)
+        : "";
     // le bouton principal suit l'urgence : y aller, ou aller vérifier
     const act = $("ov-ack");
-    if (c.status === "alert" || c.status === "escalated") { act.textContent = "J'y vais"; act.classList.remove("hidden"); }
-    else if (c.status === "offline" && !c.check_by) { act.textContent = "Je vais vérifier"; act.classList.remove("hidden"); }
+    if (top.kind === "alert" || top.kind === "escalated") { act.textContent = "J'y vais"; act.classList.remove("hidden"); }
+    else if (top.kind === "silent") { act.textContent = "Je vais vérifier"; act.classList.remove("hidden"); }
     else act.classList.add("hidden");
-    $("ov-listen").classList.toggle("hidden", !c.online && c.status === "offline");
+    $("ov-listen").classList.toggle("hidden", !c.online);
     $("ov-more").textContent = list.length > 1 ? `+ ${list.length - 1} autre${list.length > 2 ? "s" : ""} urgence${list.length > 2 ? "s" : ""} — voir le tableau` : "";
     $("ov-more").classList.toggle("hidden", list.length <= 1);
     $("overlay").classList.toggle("acked", calm);
@@ -767,8 +839,12 @@
           this.key = r.ok ? (await r.json()).key : "";
         }
         if (!this.key) { this.status = "unsupported"; return; }
-        const reg = await swReady();
-        if (!reg) { this.status = "no-sw"; return; }   // pas d'attente infinie, un verdict
+        let reg = await swReady();
+        if (!reg) {   // le SW peut être en cours d'installation : un second essai, puis un verdict
+          await new Promise((r) => setTimeout(r, 1500));
+          reg = await swReady();
+        }
+        if (!reg) { this.status = "no-sw"; return; }   // pas d'attente infinie
         try {
           this.sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(this.key) });
         } catch {
@@ -810,11 +886,16 @@
     const el = $("salle-status");
     if (!el || session.role !== "salle" || isSono) return;
     const perm = ("Notification" in window) ? Notification.permission : "unsupported";
+    // Chaque coche est une preuve, pas un souvenir : le son peut être suspendu
+    // par le navigateur après l'activation, la connexion peut être ouverte mais
+    // sans nouvelles fraîches — c'est l'état RÉEL qui s'affiche.
+    const sonOk = salle.armed && salle.audio && salle.audio.state === "running";
+    const fresh = net.open && net.lastMsgAt && Date.now() - net.lastMsgAt < 40000;
     const parts = [
-      salle.armed ? "Son ✓" : "Son —",
+      sonOk ? "Son ✓" : (salle.armed ? "Son ⚠ (touchez l'écran)" : "Son —"),
       perm === "granted" ? "Notifications ✓" : (perm === "denied" ? "Notifications ✗" : "Notifications —"),
       push.confirmed ? "Push ✓" : (push.status === "pending" ? "Push …" : "Push —"),
-      net.open ? "Connexion ✓" : "Connexion ✗",
+      fresh ? "Connexion ✓" : "Connexion ✗",
     ];
     el.textContent = parts.join("  ·  ");
     el.classList.remove("hidden");
@@ -839,9 +920,10 @@
   function remind() {
     if (!salle.state || !salle.armed) return;
     if (connLostSince && Date.now() - connLostSince > 10000) { beep("soft"); return; }
-    // un chalet muet que personne n'a pris en charge est une urgence qui attend, lui aussi
+    // un chalet muet que personne n'a pris en charge est une urgence qui attend —
+    // y compris pendant une alerte acquittée : le statut ne dit pas la connexion
     const pending = salle.state.chalets.filter((c) => c.status === "alert" || c.status === "escalated"
-      || (c.status === "offline" && c.last_hb && !c.check_by));
+      || (!c.online && c.last_hb && !c.check_by));
     if (!pending.length) return;
     const strong = pending.some((c) => c.status === "escalated" || c.id === salle.ownId);
     beep(strong ? "strong" : "soft"); navigator.vibrate?.(strong ? [400, 150, 400] : [150]);
@@ -859,14 +941,14 @@
 
   $("ov-ack").addEventListener("click", () => {
     const d = $("ov-name").dataset;
-    if (d.status === "offline") sendCheck(d.id);
+    if (d.kind === "silent") sendCheck(d.id);
     else ack(d.id, d.aid);
     // pas de fermeture optimiste : l'overlay suivra l'état confirmé par le serveur
   });
   $("ov-dismiss").addEventListener("click", () => {
     const list = emergencies();
-    ovMuted = list.length ? { key: emKey(list[0]), count: list.length } : null;
-    $("overlay").classList.add("hidden");   // ré-ouvrira tout seul si ça change ou s'aggrave
+    ovMuted = list.length ? new Set(list.map(emKey)) : null;
+    $("overlay").classList.add("hidden");   // ré-ouvrira tout seul à la moindre urgence nouvelle
   });
   // « Il pleure vraiment ? » se pose pendant l'alerte, pas après l'avoir masquée.
   $("ov-listen").addEventListener("click", () => requestListen($("ov-name").dataset.id));
@@ -874,13 +956,17 @@
   // Les actions humaines ne se mettent jamais en file : envoyées ou pas, on le dit.
   // Une action rejouée après une coupure pouvait toucher l'alerte suivante.
   const sendAction = (msg, label) => {
-    if (!net.send(msg, { queueIfOffline: false })) toast(`Hors connexion — « ${label} » non transmis. Réessayez.`, 5000);
+    if (!net.send(msg, { queueIfOffline: false })) {
+      toast(`Hors connexion — « ${label} » non transmis. Réessayez.`, 5000);
+      return false;
+    }
+    return true;
   };
   const ack = (id, aid) => sendAction({ type: "ack", chalet_id: id, aid: aid || undefined, by: session.name }, "J'y vais");
   const resolve = (id, aid) => sendAction({ type: "resolve", chalet_id: id, aid: aid || undefined, by: session.name }, "C'est réglé");
   const sendCheck = (id) => sendAction({ type: "check", chalet_id: id, by: session.name }, "Je vais vérifier");
   const sendRelease = (id, aid) => sendAction({ type: "release", chalet_id: id, aid: aid || undefined, by: session.name }, "Je ne peux plus");
-  const sendReinforce = (id) => sendAction({ type: "reinforce", chalet_id: id, by: session.name }, "Renfort");
+  const sendReinforce = (id, aid) => sendAction({ type: "reinforce", chalet_id: id, aid: aid || undefined, by: session.name }, "Renfort");
 
   function renderOwnSelect() {
     // Sans « mon chalet » choisi, les alertes de sa propre famille restent douces :
@@ -934,12 +1020,12 @@
         a?.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}">${ic("i-play")} Écouter l'alerte</button>` : "",
         a ? `<button class="btn ghost" data-resolve="${esc(c.id)}"${aid}>C'est réglé</button>` : "",
         // prise en charge complète : demander de l'aide, ou rendre l'alerte à tous
-        c.status === "acked" ? `<button class="btn ghost" data-reinforce="${esc(c.id)}">Renfort</button>` : "",
+        c.status === "acked" ? `<button class="btn ghost" data-reinforce="${esc(c.id)}"${aid}>Renfort</button>` : "",
         c.status === "acked" ? `<button class="btn ghost" data-release="${esc(c.id)}"${aid}>Je ne peux plus</button>` : "",
       ].filter(Boolean).join("");
       const primary = a && !a.acked_by
         ? `<button class="btn primary" data-ack="${esc(c.id)}"${aid}>J'y vais</button>`
-        : (c.status === "offline" && c.last_hb && !c.check_by
+        : (!c.online && c.last_hb && !c.check_by
           ? `<button class="btn primary" data-check="${esc(c.id)}">Je vais vérifier</button>` : "");
       const actions = (primary || secondary)
         ? `<div class="actions">${primary}${secondary ? `<div class="row">${secondary}</div>` : ""}</div>` : "";
@@ -971,7 +1057,7 @@
     if (b.dataset.resolve) resolve(b.dataset.resolve, b.dataset.aid);
     if (b.dataset.check) sendCheck(b.dataset.check);
     if (b.dataset.release) sendRelease(b.dataset.release, b.dataset.aid);
-    if (b.dataset.reinforce) sendReinforce(b.dataset.reinforce);
+    if (b.dataset.reinforce) sendReinforce(b.dataset.reinforce, b.dataset.aid);
     if (b.dataset.clip) playClip(b.dataset.clip, "alert");
     if (b.dataset.replay) playClip(b.dataset.replay, "fresh");
     if (b.dataset.listen) requestListen(b.dataset.listen);
@@ -1038,6 +1124,9 @@
     }
   } else if (linkCode) {
     applyLinkCode(linkCode);   // arrivée par le lien : il ne reste qu'à choisir son rôle
+    // Ouverte par un appui sur une notification : on est un récepteur — le rôle
+    // salle est présélectionné, il ne reste que le prénom et « Voir les chalets ».
+    if (params.get("src") === "notif") document.querySelector('#form-home [data-role="salle"]')?.click();
   }
 
   // Taper le lien alors que l'app est déjà ouverte ne change que le fragment : le
@@ -1055,6 +1144,19 @@
     $("in-code").value = linkFor(code);
     const known = recent.all().find((p) => p.code === code);
     if (known) $("home-role-label").textContent = known.name;
+  }
+
+  // Le service worker demande la preuve avant d'avaler une notification : une URL
+  // qui contient le code ne dit pas si la page est un récepteur armé et connecté.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      if (e.data?.type === "watching?" && e.ports?.[0]) {
+        e.ports[0].postMessage({
+          watching: session.role === "salle" && session.code === e.data.code
+            && salle.armed && net.open && Date.now() - net.lastMsgAt < 40000,
+        });
+      }
+    });
   }
 
   // Service worker : installation écran d'accueil, cache, et surtout le push.

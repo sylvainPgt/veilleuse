@@ -39,6 +39,7 @@ CLIP_TTL = float(os.getenv("VEILLEUSE_CLIP_TTL", "120"))                    # s 
 PARTY_EMPTY_TTL = float(os.getenv("VEILLEUSE_PARTY_EMPTY_TTL", "900"))      # s avant d'oublier une soirée jamais habitée (faute de frappe)
 PARTY_TTL = float(os.getenv("VEILLEUSE_PARTY_TTL", str(24 * 3600)))         # s avant d'oublier une soirée désertée
 ACK_REMINDER = float(os.getenv("VEILLEUSE_ACK_REMINDER", "240"))            # s après « J'y vais » sans résolution → rappel
+REVIVE_GRACE = float(os.getenv("VEILLEUSE_REVIVE_GRACE", "120"))            # s laissées aux chalets restaurés pour revenir après un redémarrage
 STATE_FILE = os.getenv("VEILLEUSE_STATE_FILE", "data/state.json")           # persistance minimale ("" = désactivée)
 WATCHDOG_PERIOD = 2.0
 MAX_EVENTS = 60
@@ -102,9 +103,12 @@ def _push_one(sub: dict[str, Any], payload: str, tag: str) -> None:
             headers={"Urgency": "high", "Topic": re.sub(r"[^A-Za-z0-9_-]", "", tag)[:32]})
 
 
-async def _push_entry(party: "Party", endpoint: str, entry: dict[str, Any], payload: str, tag: str) -> None:
+async def _push_entry(party: "Party", endpoint: str, entry: dict[str, Any], payload: str, tag: str) -> bool:
+    """True seulement si le service de push a ACCEPTÉ l'envoi : c'est ce qui permet
+    de ne pas répondre « essai envoyé » quand rien n'est parti."""
     try:
         await asyncio.wait_for(asyncio.to_thread(_push_one, entry["sub"], payload, tag), timeout=12)
+        return True
     except WebPushException as exc:
         resp = getattr(exc, "response", None)
         if resp is not None and resp.status_code in (403, 404, 410):
@@ -113,25 +117,28 @@ async def _push_entry(party: "Party", endpoint: str, entry: dict[str, Any], payl
         log.warning("push trop lent, abandonné pour cet abonné")
     except Exception:  # noqa: BLE001
         log.exception("push")
+    return False
 
 
 _PUSH_CONCURRENCY = asyncio.Semaphore(6)
 
 
 async def push_party(party: "Party", title: str, body: str, tag: str, only_endpoint: str | None = None,
-                     extra: dict[str, Any] | None = None) -> None:
+                     extra: dict[str, Any] | None = None) -> int:
     """Pousse une notification aux abonnés de la soirée, en parallèle borné :
-    un destinataire lent ou mort ne retarde pas les autres."""
+    un destinataire lent ou mort ne retarde pas les autres. Retourne le nombre
+    d'envois acceptés par les services de push."""
     if not PUSH_ENABLED or not party.push_subs:
-        return
+        return 0
     payload = json.dumps({"title": title, "body": body, "tag": tag, "code": party.code, **(extra or {})})
 
-    async def one(endpoint: str, entry: dict[str, Any]) -> None:
+    async def one(endpoint: str, entry: dict[str, Any]) -> bool:
         async with _PUSH_CONCURRENCY:
-            await _push_entry(party, endpoint, entry, payload, tag)
+            return await _push_entry(party, endpoint, entry, payload, tag)
 
     targets = [(e, s) for e, s in list(party.push_subs.items()) if only_endpoint is None or e == only_endpoint]
-    await asyncio.gather(*(one(e, s) for e, s in targets))
+    results = await asyncio.gather(*(one(e, s) for e, s in targets))
+    return sum(1 for r in results if r)
 
 
 async def _drain_task(party: "Party") -> None:
@@ -234,6 +241,10 @@ class Chalet:
         # la tuile, seule la reprise du heartbeat prouve que la surveillance est revenue.
         self.check_by: str | None = None
         self.check_at: float | None = None
+        # Chalet restauré après redémarrage : délai de grâce pour revenir, après quoi
+        # son absence est poussée — sinon un chalet qui ne revient jamais restait
+        # muet en silence (le push « muet » n'existait que sur une transition).
+        self.revive_deadline: float | None = None
 
     def status(self) -> str:
         if self.alert:
@@ -322,8 +333,10 @@ class Party:
         for dead in await asyncio.gather(*(send(ws) for ws in list(self.sockets))):
             if dead is not None:
                 self.sockets.pop(dead, None)
+                # la fermeture aussi est bornée : une socket zombie dont close()
+                # ne rend jamais la main suspendait broadcast(), donc le watchdog
                 try:
-                    await dead.close()
+                    await asyncio.wait_for(dead.close(), timeout=1.0)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -346,6 +359,7 @@ class Party:
         chalet.threshold = threshold
         chalet.last_hb = now()
         chalet.online = True
+        chalet.revive_deadline = None   # revenu : plus rien à surveiller côté reprise
         if not was_online:
             chalet.check_by = chalet.check_at = None   # la surveillance a repris : la vérification est close
             self.add_event("online", chalet)
@@ -355,7 +369,8 @@ class Party:
         chalet.last_noise = now()
         chalet.level = max(0, min(100, int(level)))
 
-    def raise_alert(self, chalet: Chalet, level: int, clip: str | None, reason: str = "noise") -> None:
+    def raise_alert(self, chalet: Chalet, level: int, clip: str | None, reason: str = "noise",
+                    aid_hint: str | None = None) -> None:
         chalet.last_noise = now()
         chalet.level = max(0, min(100, int(level)))
         if clip and len(clip) > MAX_CLIP_BYTES:
@@ -369,7 +384,10 @@ class Party:
             return
         # Chaque occurrence d'alerte porte son identifiant : une action (« J'y vais »,
         # « C'est réglé », clip) restée en attente ne peut pas toucher la suivante.
-        chalet.alert = {"id": "".join(secrets.choice(ID_ALPHABET) for _ in range(8)),
+        # L'émetteur peut fournir le sien (aid_hint) : le clip enregistré pendant les
+        # secondes suivantes est ainsi corrélé DÈS le déclenchement, pas après coup.
+        hint = aid_hint if aid_hint and re.fullmatch(r"[a-z0-9]{4,12}", str(aid_hint)) else None
+        chalet.alert = {"id": hint or "".join(secrets.choice(ID_ALPHABET) for _ in range(8)),
                         "started": now(), "last_noise": now(), "acked_by": None, "acked_at": None,
                         "escalated": False, "reminded": False, "clip": clip, "clip_ts": now() if clip else None,
                         "level": chalet.level, "reason": reason}
@@ -379,15 +397,15 @@ class Party:
 
     @staticmethod
     def aid_matches(chalet: Chalet, aid: str | None) -> bool:
-        """Une action qui vise une alerte précise ne s'applique qu'à celle-là.
-        Sans aid (anciens clients), on vise l'alerte en cours — comportement historique."""
-        if chalet.alert is None:
-            return False
-        return aid is None or aid == chalet.alert.get("id")
+        """Une action vise une occurrence d'alerte précise, obligatoirement : la
+        tolérance « sans aid = l'alerte en cours » maintenait exactement le défaut
+        (une action périmée retombait sur la suivante). Un client trop vieux pour
+        fournir l'aid reçoit action_stale et doit recharger la page."""
+        return chalet.alert is not None and aid is not None and aid == chalet.alert.get("id")
 
     def attach_alert_clip(self, chalet: Chalet, clip: str | None, aid: str | None = None) -> None:
-        """Le clip arrive quelques secondes après l'alerte. S'il n'y a plus d'alerte
-        (déjà réglée) ou si une AUTRE a pris sa place, on le jette."""
+        """Le clip arrive quelques secondes après l'alerte. S'il n'y a plus d'alerte,
+        si une AUTRE a pris sa place, ou s'il n'est pas corrélé, on le jette."""
         if not self.aid_matches(chalet, aid) or not clip or len(clip) > MAX_CLIP_BYTES:
             return
         chalet.alert["clip"] = clip
@@ -405,9 +423,9 @@ class Party:
         return True
 
     def resolve(self, chalet: Chalet, by: str, aid: str | None = None) -> bool:
-        chalet.clip = None  # on ne garde pas d'audio, même sans alerte en cours
         if not self.aid_matches(chalet, aid):
-            return False
+            return False  # aucun effet secondaire pour une action refusée (le clip inclus)
+        chalet.clip = None  # on ne garde pas d'audio une fois l'alerte réglée
         chalet.alert = None
         chalet.last_noise = None
         self.add_event("resolved", chalet, by=by or "quelqu'un")
@@ -428,9 +446,9 @@ class Party:
                                 "veilleuse-" + chalet.id))
         return True
 
-    def reinforce(self, chalet: Chalet, by: str) -> bool:
+    def reinforce(self, chalet: Chalet, by: str, aid: str | None = None) -> bool:
         """« Demander du renfort » : re-sonne tout le monde sans lâcher la prise en charge."""
-        if chalet.alert is None:
+        if not self.aid_matches(chalet, aid):
             return False
         who = by or chalet.alert.get("acked_by") or "quelqu'un"
         self.add_event("reinforce", chalet, by=who)
@@ -461,6 +479,16 @@ class Party:
         changed = False
         t = now()
         for chalet in self.chalets.values():
+            # chalet attendu depuis le redémarrage, jamais revenu : on prévient (une fois)
+            if chalet.revive_deadline and t > chalet.revive_deadline:
+                chalet.revive_deadline = None
+                if not chalet.online:
+                    self.add_event("offline", chalet)
+                    self.push_queue.append(("Chalet muet — " + chalet.name,
+                                            "Le babyphone n'est pas revenu après le redémarrage du serveur. "
+                                            + (chalet.kids or ""),
+                                            "veilleuse-" + chalet.id))
+                    changed = True
             if chalet.online and chalet.last_hb and t - chalet.last_hb > HEARTBEAT_TIMEOUT:
                 chalet.online = False
                 self.add_event("offline", chalet)
@@ -514,6 +542,8 @@ parties: dict[str, Party] = {}
 # au fil de l'eau et relu au démarrage. JAMAIS les clips audio. Le fichier vit sur
 # le serveur de Sylvain, expire avec les soirées, et s'efface avec elles.
 _state_dirty = False
+_persist_status = "off" if not STATE_FILE else "ok"   # exposé sur /api/health : une
+_persist_warned = False                                # persistance en panne ne doit pas être silencieuse
 
 
 def mark_dirty() -> None:
@@ -548,10 +578,21 @@ def save_state(force: bool = False) -> bool:
         tmp.write_text(json.dumps(data, ensure_ascii=False))
         tmp.replace(path)   # écriture atomique : jamais de fichier à moitié écrit
         _state_dirty = False
+        global _persist_status, _persist_warned
+        _persist_status, _persist_warned = "ok", False
         return True
     except OSError:
-        log.exception("persistance impossible (%s) — l'app continue en mémoire seule", STATE_FILE)
+        _mark_persist_error()
         return False
+
+
+def _mark_persist_error() -> None:
+    global _persist_status, _persist_warned
+    _persist_status = "error"
+    if not _persist_warned:   # une fois, pas toutes les deux secondes
+        _persist_warned = True
+        log.exception("persistance impossible (%s) — l'app continue en mémoire seule, "
+                      "voir le champ « persistence » de /api/health", STATE_FILE)
 
 
 def load_state() -> int:
@@ -589,6 +630,7 @@ def load_state() -> int:
             if isinstance(alert, dict) and alert.get("started"):
                 c.alert = {**alert, "clip": None, "clip_ts": None}
             c.online = False   # non vérifié jusqu'au prochain heartbeat
+            c.revive_deadline = now() + REVIVE_GRACE   # passé ce délai sans retour → « chalet muet » poussé
             party.chalets[c.id] = c
         parties[party.code] = party
         n += 1
@@ -699,7 +741,8 @@ async def security_headers(request: Request, call_next):
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "parties": len(parties), "version": app.version}
+    return {"ok": True, "parties": len(parties), "version": app.version,
+            "persistence": _persist_status if STATE_FILE else "off"}   # « error » = à corriger avant la fête
 
 
 @app.post("/api/parties")
@@ -798,6 +841,19 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
             await ws.send_text(json.dumps({"type": "register_denied", "chalet_id": wanted}))
             return False
         chalet = party.register_chalet(wanted, (msg.get("name") or "Chalet")[:40], (msg.get("kids") or "")[:80])
+        # Un seul émetteur courant par chalet : la dernière inscription (jeton en
+        # main) gagne, l'ancienne connexion est démise et prévenue — deux sockets
+        # simultanées pour un même chalet n'existent plus.
+        prev = party.emitter_socket(chalet.id)
+        if prev is not None and prev is not ws:
+            prev_meta = party.sockets.get(prev)
+            if prev_meta:
+                prev_meta["role"] = prev_meta["chalet_id"] = None
+            try:
+                await asyncio.wait_for(prev.send_text(json.dumps(
+                    {"type": "superseded", "chalet_id": chalet.id})), timeout=1.0)
+            except Exception:  # noqa: BLE001
+                pass
         meta["role"], meta["chalet_id"] = "chalet", chalet.id
         await ws.send_text(json.dumps({"type": "registered", "chalet_id": chalet.id, "token": chalet.token}))
         return True
@@ -823,7 +879,8 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
         return True
 
     if kind == "alert" and chalet:
-        party.raise_alert(chalet, msg.get("level", 0), msg.get("clip"), msg.get("reason", "noise"))
+        party.raise_alert(chalet, msg.get("level", 0), msg.get("clip"), msg.get("reason", "noise"),
+                          aid_hint=msg.get("aid"))
         return True
 
     if kind == "alert_clip" and chalet:  # le clip arrive après coup : jamais une nouvelle alerte
@@ -848,7 +905,7 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
         return party.release(chalet, msg.get("by") or meta.get("name") or "", aid=msg.get("aid"))
 
     if kind == "reinforce" and chalet:  # « demandez du renfort »
-        return party.reinforce(chalet, msg.get("by") or meta.get("name") or "")
+        return party.reinforce(chalet, msg.get("by") or meta.get("name") or "", aid=msg.get("aid"))
 
     if kind == "check" and chalet:  # « je vais vérifier » un chalet muet
         return party.check(chalet, msg.get("by") or meta.get("name") or "")
@@ -866,7 +923,14 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
             return False
         chalet.listen_by, chalet.listen_at = who, now()
         party.add_event("listen", chalet, by=who)
-        await emitter.send_text(json.dumps({"type": "clip_request", "seconds": LISTEN_SECONDS, "by": who}))
+        try:
+            # borné : un émetteur gelé ne doit pas suspendre la boucle du demandeur
+            await asyncio.wait_for(emitter.send_text(json.dumps(
+                {"type": "clip_request", "seconds": LISTEN_SECONDS, "by": who})), timeout=3.0)
+        except Exception:  # noqa: BLE001
+            await ws.send_text(json.dumps({"type": "listen_failed", "chalet_id": chalet.id,
+                                           "reason": "Le chalet ne répond pas."}))
+            return True
         return True
 
     if kind == "clip" and chalet:  # émetteur : voici l'enregistrement demandé
@@ -895,13 +959,14 @@ async def handle_message(party: Party, ws: WebSocket, meta: dict[str, Any], msg:
 
     if kind == "push_test":  # « envoie-MOI une notification d'essai, que je la voie arriver »
         endpoint = str(msg.get("endpoint") or "")
+        sent = 0
         if PUSH_ENABLED and endpoint in party.push_subs:
-            await push_party(party, "Notification d'essai — Veilleuse",
-                             "Tout est en place : les alertes vous parviendront ainsi. 🎉",
-                             "veilleuse-essai", only_endpoint=endpoint, extra={"test": True})
-            await ws.send_text(json.dumps({"type": "push_test_sent"}))
-        else:
-            await ws.send_text(json.dumps({"type": "push_test_failed"}))
+            sent = await push_party(party, "Notification d'essai — Veilleuse",
+                                    "Tout est en place : les alertes vous parviendront ainsi. 🎉",
+                                    "veilleuse-essai", only_endpoint=endpoint, extra={"test": True})
+        # « envoyé » seulement si le service de push a accepté — un échec absorbé
+        # en silence était présenté comme un succès.
+        await ws.send_text(json.dumps({"type": "push_test_sent" if sent else "push_test_failed"}))
         return False
 
     if kind == "ping":
