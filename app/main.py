@@ -1005,6 +1005,39 @@ def admin_guard(request: Request) -> JSONResponse | None:
     return JSONResponse({"error": "forbidden"}, status_code=403)
 
 
+@app.get("/api/admin/status")
+async def admin_status(request: Request):
+    """Ce que `persistence: "ok"` ne dit PAS : que le fichier est sur un volume
+    durable. « ok » signifie seulement que la dernière écriture a réussi — sur un
+    conteneur sans volume monté, elle réussit aussi, et tout disparaît au
+    redéploiement. On expose donc de quoi trancher : le chemin, sa taille, sa
+    fraîcheur, et surtout s'il vit sur un système de fichiers distinct de « / »
+    (un volume monté, par opposition à la couche éphémère du conteneur)."""
+    if (refus := admin_guard(request)) is not None:
+        return refus
+    info: dict[str, Any] = {"status": _persist_status if STATE_FILE else "off", "path": STATE_FILE or None}
+    if STATE_FILE:
+        path = Path(STATE_FILE)
+        try:
+            st = path.stat()
+            info |= {"exists": True, "bytes": st.st_size, "age_s": round(now() - st.st_mtime)}
+        except OSError:
+            info |= {"exists": False, "bytes": 0, "age_s": None}
+        try:
+            # un volume monté a son propre st_dev ; la couche du conteneur partage celui de « / »
+            info["separate_volume"] = os.stat(path.parent).st_dev != os.stat("/").st_dev
+        except OSError:
+            info["separate_volume"] = None
+        info["note"] = ("Volume distinct détecté : l'état devrait survivre à un redéploiement."
+                        if info.get("separate_volume") else
+                        "ATTENTION : même système de fichiers que « / » — probablement la couche "
+                        "éphémère du conteneur. Montez un volume durable sur ce chemin, sinon "
+                        "l'état sera perdu au prochain redéploiement.")
+    return {"persistence": info, "parties": len(parties),
+            "secret_from_env": bool(os.getenv("VEILLEUSE_SECRET")),
+            "push": PUSH_ENABLED}
+
+
 @app.get("/api/admin/parties")
 async def admin_parties(request: Request):
     if (refus := admin_guard(request)) is not None:

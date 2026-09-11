@@ -1,7 +1,18 @@
-import asyncio, json
+"""Parcours complet à deux chalets + écran sono. Produit les captures du README.
+
+Contrairement aux autres scénarios, celui-ci ÉCRIT dans docs/ : lancez-le depuis
+la racine du dépôt. Il démarre son propre serveur, comme les autres.
+
+Usage : python docs/e2e.py   (serveur sur :8798)
+"""
+import asyncio, json, os, sys
 from playwright.async_api import async_playwright
 
-BASE = "http://localhost:8000"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _harness import start_server  # noqa: E402
+
+PORT = 8798
+BASE = f"http://127.0.0.1:{PORT}"
 M = {"width": 390, "height": 844}
 async def main():
     async with async_playwright() as p:
@@ -74,4 +85,8 @@ async def main():
         print({c["name"]: c["status"] for c in st["chalets"]})
         print("errors:", errors)
         await b.close()
-asyncio.run(main())
+srv = start_server(PORT)
+try:
+    asyncio.run(main())
+finally:
+    srv.terminate(); srv.wait()

@@ -615,6 +615,24 @@ def test_health_exposes_persistence_status(tmp_path, monkeypatch):
     assert client.get("/api/health").json()["persistence"] == "error"
 
 
+def test_admin_status_distinguishes_write_ok_from_durable(tmp_path, monkeypatch):
+    """« persistence: ok » dit seulement que l'écriture a réussi. La durabilité du
+    volume est une AUTRE question, exposée séparément."""
+    monkeypatch.setattr(main, "ADMIN_TOKEN", "s3cret")
+    monkeypatch.setattr(main, "STATE_FILE", str(tmp_path / "state.json"))
+    main._admin_fails.clear()
+    main.mark_dirty(); assert main.save_state()
+    client = TestClient(app)
+    d = client.get("/api/admin/status", headers={"X-Admin-Token": "s3cret"}).json()
+    p = d["persistence"]
+    assert p["status"] == "ok" and p["exists"] and p["bytes"] > 0
+    # tmp_path est sur le même système de fichiers que « / » ici : l'indicateur
+    # doit donc dire « pas de volume distinct », malgré une écriture réussie.
+    assert p["separate_volume"] is False
+    assert "ATTENTION" in p["note"]
+    assert client.get("/api/admin/status").status_code == 403   # protégé comme le reste
+
+
 def test_admin_requires_token(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr(main, "ADMIN_TOKEN", "")

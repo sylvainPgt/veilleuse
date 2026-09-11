@@ -646,7 +646,10 @@
     }
   });
   $("btn-fullscreen").addEventListener("click", () => { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {}); });
-  $("sel-own").addEventListener("change", (e) => { salle.ownId = e.target.value; store.set("own:" + session.code, salle.ownId); renderTiles(); });
+  $("sel-own").addEventListener("change", (e) => {
+    salle.ownId = e.target.value; store.set("own:" + session.code, salle.ownId);
+    updateOwnTodo(); renderTiles();
+  });
 
   function onSalleMessage(m) {
     if (m.type === "level") {
@@ -968,10 +971,16 @@
   const sendRelease = (id, aid) => sendAction({ type: "release", chalet_id: id, aid: aid || undefined, by: session.name }, "Je ne peux plus");
   const sendReinforce = (id, aid) => sendAction({ type: "reinforce", chalet_id: id, aid: aid || undefined, by: session.name }, "Renfort");
 
+  // Sans « mon chalet » choisi, les alertes de sa propre famille restent douces :
+  // le rappel reste visible tant que le choix n'est pas fait — et disparaît dès
+  // qu'il l'est, sans attendre la prochaine diffusion du serveur.
+  function updateOwnTodo() {
+    document.querySelector(".own-picker")?.classList.toggle(
+      "todo", !salle.ownId && salle.state?.chalets.length > 0);
+  }
+
   function renderOwnSelect() {
-    // Sans « mon chalet » choisi, les alertes de sa propre famille restent douces :
-    // le rappel reste visible tant que le choix n'est pas fait.
-    document.querySelector(".own-picker")?.classList.toggle("todo", !salle.ownId && salle.state?.chalets.length > 0);
+    updateOwnTodo();
     const sel = $("sel-own"); const cur = salle.ownId;
     const opts = ['<option value="">— aucun / je veille sur tous —</option>'].concat(salle.state.chalets.map((c) => `<option value="${esc(c.id)}"${c.id === cur ? " selected" : ""}>${esc(c.name)}</option>`));
     if (sel.innerHTML !== opts.join("")) sel.innerHTML = opts.join("");
@@ -990,67 +999,120 @@
 
   // « Tout va bien » promettait plus que ce qu'on sait : on sait seulement qu'on écoute.
   const STATUS_LABEL = { ok: "À l'écoute", noise: "Un bruit…", alert: "Ça sonne !", escalated: "Personne n'a répondu !", acked: "Quelqu'un y va", offline: "Chalet muet" };
+  // ---------- tuiles : mises à jour chirurgicales ----------
+  // Reconstruire #tiles en bloc chaque seconde détruisait les boutons sous le
+  // doigt : appui et relâchement tombaient sur deux nœuds différents, donc aucun
+  // clic n'était émis — « J'y vais » pouvait ne rien faire. Désormais une tuile
+  // n'est reconstruite que si sa STRUCTURE change, les durées sont écrites dans
+  // des nœuds déjà en place, et rien n'est reconstruit, supprimé ni réordonné
+  // pendant qu'un doigt est posé.
+  const ic = (n) => `<svg class="ic"><use href="#${n}"/></svg>`;
+  let pointerIsDown = false, pointerUpAt = 0;
+  const touching = () => pointerIsDown || Date.now() - pointerUpAt < 350;
+
+  function tileLine(c, now) {
+    const a = c.alert;
+    if (a) {
+      let line = a.acked_by ? `${a.acked_by} y va (depuis ${fmtAgo(now - a.acked_at)})` : `sonne depuis ${fmtAgo(now - a.started)}`;
+      if (a.reason === "test") line = "test · " + line;
+      if (!c.online) line = `⚠ chalet muet pendant l'alerte · ${line}`;   // l'alerte ne masque pas le silence
+      return line;
+    }
+    if (c.status === "offline") {
+      const line = c.last_hb ? `plus de nouvelles depuis ${fmtAgo(now - c.last_hb)}` : "jamais connecté";
+      return c.check_by ? `${c.check_by} va vérifier · ${line}` : line;
+    }
+    return "";
+  }
+
+  // Tout ce qui change la structure — donc les boutons. Les durées n'y sont pas :
+  // c'est ce qui permet de ne rien reconstruire à chaque seconde.
+  const tileSig = (c) => JSON.stringify([c.status, c.online, c.name, c.kids, c.threshold, c.battery,
+    c.listen_by, c.check_by, c.has_fresh_clip, c.last_hb != null,
+    c.alert?.id, c.alert?.acked_by, c.alert?.has_clip, c.alert?.reason,
+    c.id === salle.ownId, salle.awaitingClip === c.id]);
+
+  function tileInner(c) {
+    const a = c.alert;
+    const aid = a ? ` data-aid="${esc(a.id || "")}"` : "";
+    // Écouter = demander du frais. Réécouter = rejouer le dernier reçu (aussi le
+    // repli quand iOS refuse la lecture automatique faute de geste utilisateur.)
+    // Une seule action principale ; le reste en rang serré dessous.
+    const secondary = [
+      c.status !== "offline"
+        ? `<button class="btn ghost" data-listen="${esc(c.id)}">${ic("i-speaker")} ${salle.awaitingClip === c.id ? "…" : "Écouter"}</button>` : "",
+      c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}">${ic("i-replay")} Réécouter</button>` : "",
+      a?.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}">${ic("i-play")} Écouter l'alerte</button>` : "",
+      a ? `<button class="btn ghost" data-resolve="${esc(c.id)}"${aid}>C'est réglé</button>` : "",
+      // prise en charge complète : demander de l'aide, ou rendre l'alerte à tous
+      c.status === "acked" ? `<button class="btn ghost" data-reinforce="${esc(c.id)}"${aid}>Renfort</button>` : "",
+      c.status === "acked" ? `<button class="btn ghost" data-release="${esc(c.id)}"${aid}>Je ne peux plus</button>` : "",
+    ].filter(Boolean).join("");
+    const primary = a && !a.acked_by
+      ? `<button class="btn primary" data-ack="${esc(c.id)}"${aid}>J'y vais</button>`
+      : (!c.online && c.last_hb && !c.check_by
+        ? `<button class="btn primary" data-check="${esc(c.id)}">Je vais vérifier</button>` : "");
+    const actions = (primary || secondary)
+      ? `<div class="actions">${primary}${secondary ? `<div class="row">${secondary}</div>` : ""}</div>` : "";
+    return `<div class="name">${esc(c.name)}${c.id === salle.ownId ? '<span class="tag">mon chalet</span>' : ""}</div>
+      <div class="kids">${esc(c.kids)}</div>
+      <div class="meter"><div class="meter-rest"></div><div class="meter-thr" style="left:${c.threshold ?? 55}%"></div></div>
+      <div class="status">${STATUS_LABEL[c.status] || c.status}${c.listen_by ? `<span class="listening">${ic("i-speaker")} ${esc(c.listen_by)} écoute</span>` : ""}</div>
+      <div class="meta"><span class="line"></span>${c.battery != null ? `<span class="num">${ic("i-battery")} ${c.battery} %</span>` : ""}</div>
+      ${actions}`;
+  }
+
   function renderTiles() {
     if (session.role === "salle") checkFreshness();
     if (!salle.state) return;
     const now = Date.now() / 1000 + salle.serverOffset;
     const chalets = [...salle.state.chalets].sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
     $("empty").classList.toggle("hidden", chalets.length > 0);
-    const html = chalets.map((c) => {
-      const a = c.alert;
-      let line = "";
-      if (a) {
-        line = a.acked_by ? `${esc(a.acked_by)} y va (depuis ${fmtAgo(now - a.acked_at)})` : `sonne depuis ${fmtAgo(now - a.started)}`;
-        if (a.reason === "test") line = "test · " + line;
-        // une alerte ne doit pas masquer que le babyphone lui-même s'est tu
-        if (!c.online) line = `⚠ chalet muet pendant l'alerte · ${line}`;
-      } else if (c.status === "offline") {
-        line = c.last_hb ? `plus de nouvelles depuis ${fmtAgo(now - c.last_hb)}` : "jamais connecté";
-        if (c.check_by) line = `${esc(c.check_by)} va vérifier · ${line}`;
-      }
-      // Écouter = demander du frais. Réécouter = rejouer le dernier reçu (aussi le
-      // repli quand iOS refuse la lecture automatique faute de geste utilisateur.)
-      // Une seule action principale ; le reste en rang serré dessous.
-      const ic = (n) => `<svg class="ic"><use href="#${n}"/></svg>`;
-      const aid = a ? ` data-aid="${esc(a.id || "")}"` : "";
-      const secondary = [
-        c.status !== "offline"
-          ? `<button class="btn ghost" data-listen="${esc(c.id)}">${ic("i-speaker")} ${salle.awaitingClip === c.id ? "…" : "Écouter"}</button>` : "",
-        c.has_fresh_clip ? `<button class="btn ghost" data-replay="${esc(c.id)}">${ic("i-replay")} Réécouter</button>` : "",
-        a?.has_clip ? `<button class="btn ghost" data-clip="${esc(c.id)}">${ic("i-play")} Écouter l'alerte</button>` : "",
-        a ? `<button class="btn ghost" data-resolve="${esc(c.id)}"${aid}>C'est réglé</button>` : "",
-        // prise en charge complète : demander de l'aide, ou rendre l'alerte à tous
-        c.status === "acked" ? `<button class="btn ghost" data-reinforce="${esc(c.id)}"${aid}>Renfort</button>` : "",
-        c.status === "acked" ? `<button class="btn ghost" data-release="${esc(c.id)}"${aid}>Je ne peux plus</button>` : "",
-      ].filter(Boolean).join("");
-      const primary = a && !a.acked_by
-        ? `<button class="btn primary" data-ack="${esc(c.id)}"${aid}>J'y vais</button>`
-        : (!c.online && c.last_hb && !c.check_by
-          ? `<button class="btn primary" data-check="${esc(c.id)}">Je vais vérifier</button>` : "");
-      const actions = (primary || secondary)
-        ? `<div class="actions">${primary}${secondary ? `<div class="row">${secondary}</div>` : ""}</div>` : "";
-      const meta = [line ? `<span>${esc(line)}</span>` : "",
-                    c.battery != null ? `<span class="num">${ic("i-battery")} ${c.battery} %</span>` : ""].filter(Boolean).join("");
-      return `<div class="tile${c.id === salle.ownId ? " own" : ""}" data-id="${esc(c.id)}" data-status="${c.status}">
-        <div class="name">${esc(c.name)}${c.id === salle.ownId ? '<span class="tag">mon chalet</span>' : ""}</div>
-        <div class="kids">${esc(c.kids)}</div>
-        <div class="meter"><div class="meter-rest" style="width:${100 - c.level}%"></div><div class="meter-thr" style="left:${c.threshold ?? 55}%"></div></div>
-        <div class="status">${STATUS_LABEL[c.status] || c.status}${c.listen_by ? `<span class="listening">${ic("i-speaker")} ${esc(c.listen_by)} écoute</span>` : ""}</div>
-        <div class="meta">${meta}</div>
-        ${actions}</div>`;
-    }).join("");
     const box = $("tiles");
-    // Un appui en cours ne doit pas voir sa cible remplacée sous le doigt :
-    // on saute ce cycle, le suivant (1 s) rattrapera l'affichage.
-    if (box.dataset.html !== html && Date.now() - lastTilesTouch > 400) {
-      box.innerHTML = html; box.dataset.html = html;
+    const held = touching();
+    const known = new Map([...box.children].map((el) => [el.dataset.id, el]));
+
+    for (const c of chalets) {
+      let el = known.get(c.id);
+      if (!el) {
+        el = document.createElement("div");
+        el.dataset.id = c.id; el.dataset.sig = "";
+        box.appendChild(el); known.set(c.id, el);
+      }
+      const sig = tileSig(c);
+      if (el.dataset.sig !== sig && !held) {   // structure : jamais pendant un appui
+        el.className = "tile" + (c.id === salle.ownId ? " own" : "");
+        el.dataset.status = c.status;
+        el.innerHTML = tileInner(c);
+        el.dataset.sig = sig;
+      }
+      // volatile : on écrit dans des nœuds existants, aucun bouton n'est détruit
+      const line = tileLine(c, now);
+      const lineEl = el.querySelector(".meta .line");
+      if (lineEl && lineEl.textContent !== line) lineEl.textContent = line;
+      const metaEl = el.querySelector(".meta");
+      if (metaEl) metaEl.hidden = !line && c.battery == null;
+      const rest = el.querySelector(".meter-rest");
+      if (rest) setLevel(rest, c.level);
+    }
+
+    if (!held) {
+      for (const [id, el] of known) if (!chalets.some((c) => c.id === id)) el.remove();
+      // réordonner en DÉPLAÇANT les nœuds : un bouton conserve son identité, donc
+      // un changement d'ordre ne peut pas transformer un appui en action sur un autre chalet
+      chalets.forEach((c, i) => {
+        const el = known.get(c.id);
+        if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
+      });
     }
     updateOverlay();   // durées et priorité rafraîchies au même rythme
     updateSalleStatus();
   }
   const rank = (c) => ({ escalated: 5, alert: 4, acked: 3, offline: 2, noise: 1, ok: 0 }[c.status] ?? 0);
-  let lastTilesTouch = 0;
-  $("tiles").addEventListener("pointerdown", () => { lastTilesTouch = Date.now(); }, { passive: true });
+  $("tiles").addEventListener("pointerdown", () => { pointerIsDown = true; }, { passive: true });
+  for (const ev of ["pointerup", "pointercancel"]) {
+    window.addEventListener(ev, () => { pointerIsDown = false; pointerUpAt = Date.now(); }, { passive: true });
+  }
   $("tiles").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.ack) ack(b.dataset.ack, b.dataset.aid);

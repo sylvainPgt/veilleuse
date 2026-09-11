@@ -29,10 +29,14 @@ Le PC de la sono affiche aussi le tableau en plein écran (mode `?mode=sono`).
 - `Dockerfile`, `docker-compose.yml` — déploiement Coolify, port 8000.
 
 ## Commandes
-- Lancer : `uvicorn app.main:app --reload`
+- Lancer : `uvicorn app.main:app --reload` (jamais `--workers` : l'état vit dans le processus)
 - Tests : `pip install -r requirements-dev.txt && pytest`
-- Test navigateur avec micro simulé (Playwright/Chromium) : voir `docs/e2e.py`
-  (`python docs/e2e.py`, serveur lancé sur :8000). Il produit les captures de `docs/`.
+- Scénarios navigateur : `docs/e2e_taps.py`, `e2e_incidents.py`, `e2e_identity.py`,
+  `e2e_resume.py`, `e2e_restart.py` — chacun démarre son propre serveur.
+  `docs/e2e.py` (captures du README) attend un serveur sur :8000.
+  **Lire `docs/TESTS.md`** : ce que chaque niveau prouve, et ce qu'aucun ne prouve.
+- Interactions : dans les scénarios, **jamais `dispatch_event`** — clic/tap réels
+  uniquement, sinon on masque les défauts d'actionnabilité qu'on cherche.
 
 ## Points d'architecture à ne pas casser (appris à la dure)
 - Le service worker est **servi à la racine** (`/sw.js`, route FastAPI) : depuis `/static/`
@@ -43,6 +47,11 @@ Le PC de la sono affiche aussi le tableau en plein écran (mode `?mode=sono`).
 - Chaque alerte porte un `aid` ; les actions humaines ne se mettent jamais en file hors ligne.
 - `hello` ne donne jamais le rôle émetteur ; reprendre un chalet exige son jeton (`token`).
 - Endpoints push limités aux vrais services (FCM/APNs/Mozilla/WNS) — anti-SSRF.
+- Les tuiles se mettent à jour **chirurgicalement** : reconstruire `#tiles` en bloc
+  détruisait le bouton sous le doigt et perdait l'appui. Rien n'est reconstruit,
+  supprimé ni réordonné pendant qu'un pointeur est posé (`touching()`).
+- `persistence: "ok"` = dernière écriture réussie, PAS un volume durable. La
+  détection de volume monté est dans `/api/admin/status`.
 
 ## État au 11 septembre 2026
 Trois revues externes intégralement traitées. 41 tests backend, batteries navigateur

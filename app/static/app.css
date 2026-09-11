@@ -173,7 +173,10 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
   color: var(--text); font-weight: 600;
 }
 .tile .meta { display: flex; justify-content: space-between; gap: var(--s3); font-size: var(--t-xs); color: var(--muted); }
-.tile .meta:empty, .tile .kids:empty { display: none; }
+.tile .meta:empty, .tile .kids:empty, .tile .meta[hidden] { display: none; }
+/* Le span de durée existe toujours (on y écrit sans reconstruire la tuile) mais,
+   vide, il ne doit pas pousser la batterie à l'autre bout de la ligne. */
+.tile .meta .line:empty { display: none; }
 .overlay-kids:empty { display: none; }
 .tile .status { font-weight: 700; font-size: var(--t-sm); letter-spacing: .03em; text-transform: uppercase; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 .tile .listening { color: var(--amber); text-transform: none; letter-spacing: 0; font-weight: 600; font-size: var(--t-xs); }

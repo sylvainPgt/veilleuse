@@ -35,6 +35,7 @@
   </div>
 
   <div id="panel" class="hidden">
+    <div id="deploy" class="card"></div>
     <div class="bar">
       <span class="bar-title"><span id="count"></span></span>
       <button id="btn-refresh" class="btn ghost small">Rafraîchir</button>
@@ -65,6 +66,7 @@
     if (r.status === 403) { token = ""; sessionStorage.removeItem("veilleuse.admin"); $("panel").classList.add("hidden"); $("auth").classList.remove("hidden"); return toast("Jeton refusé", 4000); }
     const { parties } = await r.json();
     $("auth").classList.add("hidden"); $("panel").classList.remove("hidden");
+    loadDeploy();
     $("count").textContent = parties.length ? `${parties.length} soirée${parties.length > 1 ? "s" : ""} en mémoire` : "Aucune soirée en mémoire";
     $("rows").innerHTML = parties.map((p) => `<tr>
       <td><strong>${esc(p.name)}</strong><div class="code">${esc(p.code)}</div></td>
@@ -73,6 +75,23 @@
       <td class="num">${p.sockets ? "—" : fmtIdle(p.idle)}</td>
       <td><button class="btn ghost small" data-del="${esc(p.code)}">Supprimer</button></td>
     </tr>`).join("");
+  }
+
+  // État du déploiement : ce qui doit être vrai avant la soirée.
+  async function loadDeploy() {
+    let d;
+    try { d = await (await call("/api/admin/status")).json(); } catch { return; }
+    const p = d.persistence || {};
+    const ok = (b) => b ? "✓" : "✗";
+    const durable = p.status === "off" ? null : p.separate_volume;
+    $("deploy").innerHTML = `
+      <strong class="t">État du déploiement</strong>
+      <div>${ok(d.secret_from_env)} VEILLEUSE_SECRET défini — sans lui, liens et abonnements meurent à chaque redémarrage.</div>
+      <div>${ok(d.push)} Web Push disponible côté serveur.</div>
+      <div>${ok(p.status === "ok")} Écriture de l'état : <code>${esc(p.status)}</code>${p.path ? ` (<code>${esc(p.path)}</code>)` : ""}.</div>
+      ${p.status === "off" ? "" : `<div>${ok(durable)} Volume durable : ${esc(p.note || "")}</div>
+      <div class="hint">Dernière écriture il y a ${p.age_s == null ? "—" : p.age_s + " s"}, ${p.bytes || 0} octets.
+      Une écriture réussie ne prouve pas la durabilité : la seule preuve est de redéployer puis de revoir les soirées ci-dessous.</div>`}`;
   }
 
   $("btn-login").addEventListener("click", () => {

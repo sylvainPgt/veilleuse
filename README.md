@@ -60,8 +60,19 @@ Tests :
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+pytest                                  # logique serveur
+python -m playwright install chromium
+python docs/e2e_taps.py                 # interactions réelles sur les tuiles
+python docs/e2e_incidents.py            # chalet muet, urgences multiples, renfort, rappel
+python docs/e2e_identity.py             # jetons par soirée, relève d'émetteur
+python docs/e2e_resume.py               # reprise après rechargement
+python docs/e2e_restart.py              # arrêt/redémarrage réel du processus
 ```
+
+Chaque scénario navigateur démarre son propre serveur. Ce que chacun couvre — et
+surtout **ce qu'aucun ne prouve** (la livraison push réelle, le micro, iOS) :
+[`docs/TESTS.md`](docs/TESTS.md). La validation sur appareils reste à faire :
+[`docs/CHECKLIST-TERRAIN.md`](docs/CHECKLIST-TERRAIN.md).
 
 ## Le soir de la fête
 
@@ -92,7 +103,9 @@ Veilleuse entend, elle ne voit pas : elle détecte les pleurs et les bruits, com
 
 **Watchdog serveur.** Toutes les 2 secondes : un chalet sans heartbeat depuis 45 s devient « muet » ; une alerte non acquittée depuis 90 s passe en « escalade ». Les deux délais se règlent par variables d'environnement (`VEILLEUSE_HEARTBEAT_TIMEOUT`, `VEILLEUSE_ESCALATION_DELAY`).
 
-**Un seul processus, une seule instance.** L'état vit dans le processus (assisté du fichier ci-dessous) : lancez Uvicorn **sans** `--workers` et gardez **une** réplique du conteneur — plusieurs instances se partageraient les soirées sans se voir. `GET /api/health` expose `persistence` (`ok` / `error` / `off`) : une persistance en panne n'est jamais silencieuse. Au redémarrage, un chalet attendu qui ne revient pas dans `VEILLEUSE_REVIVE_GRACE` (2 min) est poussé « chalet muet » — un serveur éteint, lui, ne peut rien pousser : il prévient à son retour.
+**Un seul processus, une seule instance.** L'état vit dans le processus (assisté du fichier ci-dessous) : lancez Uvicorn **sans** `--workers` et gardez **une** réplique du conteneur — plusieurs instances se partageraient les soirées sans se voir. Au redémarrage, un chalet attendu qui ne revient pas dans `VEILLEUSE_REVIVE_GRACE` (2 min) est poussé « chalet muet » — un serveur éteint, lui, ne peut rien pousser : il prévient à son retour.
+
+**`persistence: "ok"` ne prouve pas la durabilité.** `GET /api/health` expose `persistence` (`ok` / `error` / `off`), mais « ok » signifie seulement que *la dernière écriture a réussi* : sur un conteneur sans volume monté, elle réussit aussi et tout disparaît au redéploiement. La page `/admin` affiche donc un encart « État du déploiement » qui dit séparément si le fichier vit sur un **système de fichiers distinct de `/`** — signe d'un volume réellement monté. La seule preuve reste empirique : créer une soirée, redéployer, vérifier qu'elle est toujours là.
 
 **Persistance minimale, jamais d'audio.** Un petit fichier JSON local (`VEILLEUSE_STATE_FILE`, `data/state.json` par défaut, vide pour désactiver) garde le strict nécessaire à la reprise : soirées, chalets attendus, alertes en cours **sans leur clip**, abonnements push, suppressions admin. Les clips audio, eux, ne touchent jamais le disque : effacés à la résolution et au bout de deux minutes (`VEILLEUSE_CLIP_TTL`), API servie en `no-store`. Les soirées s'oublient toutes seules (15 min si vide — `VEILLEUSE_PARTY_EMPTY_TTL` —, 24 h sans activité — `VEILLEUSE_PARTY_TTL`) et le fichier suit. En Docker, montez un volume sur `/srv/data` (sur Coolify : « persistent storage »).
 
