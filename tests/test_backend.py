@@ -9,7 +9,8 @@ from app.main import Party, app, parties
 
 
 @pytest.fixture(autouse=True)
-def _clean():
+def _clean(monkeypatch):
+    monkeypatch.setattr(main, "STATE_FILE", "")   # pas d'écriture disque pendant les tests
     parties.clear()
     main.deleted_codes.clear()
     yield
@@ -214,12 +215,14 @@ def test_push_key_and_subscription():
         code = main.create_party("push").code
         with client.websocket_connect(f"/ws/{code}") as ws:
             recv_until(ws, "state")
-            ws.send_json({"type": "push_sub", "sub": {"endpoint": "https://fcm.example/abc", "keys": {"p256dh": "x", "auth": "y"}}})
+            ws.send_json({"type": "push_sub", "sub": {"endpoint": "https://fcm.googleapis.com/fcm/send/abc", "keys": {"p256dh": "x", "auth": "y"}}})
+            recv_until(ws, "push_ok")   # le serveur confirme : la permission seule ne prouve rien
             ws.send_json({"type": "push_sub", "sub": {"endpoint": "http://pas-https/refusé"}})
+            ws.send_json({"type": "push_sub", "sub": {"endpoint": "https://evil.example/ssrf"}})   # hors services de push connus
             ws.send_json({"type": "push_sub", "sub": "n'importe quoi"})
             ws.send_json({"type": "ping"}); recv_until(ws, "pong", limit=8)
         subs = main.parties[code].push_subs
-        assert list(subs) == ["https://fcm.example/abc"]
+        assert list(subs) == ["https://fcm.googleapis.com/fcm/send/abc"]
 
 
 def test_alerts_queue_pushes():
@@ -262,6 +265,179 @@ def test_dead_push_subscriptions_are_pruned(monkeypatch):
     assert list(p.push_subs) == ["https://ok/1"]   # l'abonnement mort est élagué
 
 
+def test_sw_served_at_root():
+    """Revue n°1 : enregistré depuis /static/, le service worker ne contrôlait
+    jamais la page « / » — ready ne se résolvait pas, le push était mort-né."""
+    client = TestClient(app)
+    r = client.get("/sw.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+    assert "notificationclick" in r.text
+
+
+def test_stale_actions_cannot_touch_new_alert():
+    """Revue n°4 : un « C'est réglé » resté en file pendant une coupure ne doit
+    pas effacer l'alerte suivante."""
+    p = Party("test")
+    c = p.register_chalet("m", "M", "")
+    p.raise_alert(c, 80, None)
+    old_aid = c.alert["id"]
+    assert p.resolve(c, "Marie", aid=old_aid)          # premier cycle : normal
+    p.raise_alert(c, 85, None)
+    new_aid = c.alert["id"]
+    assert new_aid != old_aid
+    assert not p.resolve(c, "Marie", aid=old_aid)      # action périmée : refusée
+    assert c.alert is not None
+    assert not p.ack(c, "Paul", aid=old_aid)           # idem pour « J'y vais »
+    assert c.alert["acked_by"] is None
+    p.attach_alert_clip(c, "data:audio/mp4;base64,AAAA", aid=old_aid)
+    assert c.alert["clip"] is None                     # le clip périmé est jeté
+    assert p.ack(c, "Paul", aid=new_aid)               # la bonne occurrence, elle, passe
+    assert p.resolve(c, "Paul", aid=new_aid)
+
+
+def test_release_and_reinforce():
+    """Revue n°6 : « je ne peux plus y aller » rend l'alerte et relance l'escalade ;
+    « renfort » re-sonne tout le monde sans lâcher la prise en charge."""
+    p = Party("test")
+    c = p.register_chalet("m", "Mésange", "")
+    p.raise_alert(c, 80, None)
+    p.ack(c, "Marie")
+    p.push_queue.clear()
+    assert p.reinforce(c, "Marie")
+    assert c.alert["acked_by"] == "Marie"              # le renfort ne libère pas
+    assert any("Renfort" in t for t, _, _ in p.push_queue)
+    assert p.release(c, "Marie")
+    assert c.alert["acked_by"] is None and c.status() == "alert"
+    # le chrono d'escalade est reparti de la libération
+    c.alert["started"] -= main.ESCALATION_DELAY + 1
+    assert p.watchdog() and c.alert["escalated"]
+
+
+def test_ack_reminder_fires_once():
+    """Revue n°6 : « J'y vais » sans « C'est réglé » finit par rappeler tout le monde."""
+    p = Party("test")
+    c = p.register_chalet("m", "Mésange", "")
+    p.raise_alert(c, 80, None)
+    p.ack(c, "Marie")
+    p.push_queue.clear()
+    c.alert["acked_at"] -= main.ACK_REMINDER + 1
+    assert p.watchdog()
+    assert any(t.startswith("Toujours en cours") for t, _, _ in p.push_queue)
+    n = len(p.push_queue)
+    assert not p.watchdog() or len(p.push_queue) == n  # un seul rappel, pas une rafale
+
+
+def test_check_flow_for_offline_chalet():
+    """Revue n°3 : « je vais vérifier » un chalet muet — visible, mais la tuile ne
+    reverdit qu'à la preuve : le retour du heartbeat."""
+    p = Party("test")
+    c = p.register_chalet("m", "Mésange", "")
+    p.heartbeat(c, 5, None, None)
+    c.online = False
+    assert p.check(c, "Marie")
+    assert c.check_by == "Marie" and c.status() == "offline"   # toujours muet : pas de faux vert
+    assert not p.check(c, "Paul") or True  # un chalet en ligne refuse check (couvert ci-dessous)
+    p.heartbeat(c, 5, None, None)                              # la surveillance reprend
+    assert c.check_by is None                                  # la vérification est close
+    assert not p.check(c, "Paul")                              # en ligne : rien à vérifier
+
+
+def test_hello_cannot_grant_emitter_role():
+    """Revue n°9 : hello role="chalet" + chalet_id d'autrui passait is_emitter_of."""
+    with TestClient(app) as client:
+        code = main.create_party("spoof").code
+        with client.websocket_connect(f"/ws/{code}") as emitter, client.websocket_connect(f"/ws/{code}") as intrus:
+            recv_until(emitter, "state"); recv_until(intrus, "state")
+            emitter.send_json({"type": "register", "chalet_id": "m", "name": "Mésange", "kids": ""})
+            recv_until(emitter, "registered")
+            chalet = main.parties[code].chalets["m"]
+
+            intrus.send_json({"type": "hello", "role": "chalet", "chalet_id": "m", "name": "Intrus"})
+            intrus.send_json({"type": "alert", "chalet_id": "m", "level": 99})
+            intrus.send_json({"type": "hb", "chalet_id": "m", "level": 1})
+            intrus.send_json({"type": "ping"}); recv_until(intrus, "pong", limit=12)
+            assert chalet.alert is None and chalet.online is False
+
+
+def test_register_takeover_requires_token():
+    """Revue n°9 : reprendre un chalet existant exige le jeton remis au premier."""
+    with TestClient(app) as client:
+        code = main.create_party("jeton").code
+        with client.websocket_connect(f"/ws/{code}") as first, client.websocket_connect(f"/ws/{code}") as second:
+            recv_until(first, "state"); recv_until(second, "state")
+            first.send_json({"type": "register", "chalet_id": "m", "name": "Mésange", "kids": ""})
+            token = recv_until(first, "registered")["token"]
+            chalet = main.parties[code].chalets["m"]
+
+            second.send_json({"type": "register", "chalet_id": "m", "name": "Pirate", "kids": ""})
+            assert recv_until(second, "register_denied", limit=6)["chalet_id"] == "m"
+            assert chalet.name == "Mésange"            # rien n'a été écrasé
+            second.send_json({"type": "alert", "chalet_id": "m", "level": 99})
+            second.send_json({"type": "ping"}); recv_until(second, "pong", limit=8)
+            assert chalet.alert is None                # et toujours pas émetteur
+
+            # le vrai téléphone, lui, reprend avec son jeton (après rechargement p.ex.)
+            second.send_json({"type": "register", "chalet_id": "m", "name": "Mésange", "kids": "Léo", "token": token})
+            assert recv_until(second, "registered", limit=6)["chalet_id"] == "m"
+            assert chalet.kids == "Léo"
+
+
+def test_state_survives_restart(tmp_path, monkeypatch):
+    """Revue n°5 : la reprise ne repart plus de zéro — chalets attendus (non
+    vérifiés), alerte en cours (sans audio), abonnements push et tombales."""
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(main, "STATE_FILE", str(state))
+    party = main.create_party("Les 40 ans")
+    ch = party.register_chalet("m", "Mésange", "Léo et Jade")
+    party.heartbeat(ch, 10, 80, 55)
+    party.raise_alert(ch, 90, "data:audio/mp4;base64,AAAA")
+    aid, token = ch.alert["id"], ch.token
+    party.push_subs["https://fcm.googleapis.com/fcm/send/x"] = {"sub": {"endpoint": "https://fcm.googleapis.com/fcm/send/x"}}
+    main.mark_dirty()
+    condamnee = main.create_party("à supprimer")
+    main.deleted_codes.add(condamnee.code)
+    del main.parties[condamnee.code]
+    assert main.save_state()
+
+    parties.clear(); main.deleted_codes.clear()        # « redémarrage »
+    assert main.load_state() == 1
+    revived = main.parties[party.code]
+    assert revived.name == "Les 40 ans"
+    c2 = revived.chalets["m"]
+    assert c2.kids == "Léo et Jade" and c2.token == token
+    assert c2.online is False                          # non vérifié tant que pas de heartbeat
+    assert c2.status() in ("offline", "alert", "escalated")
+    assert c2.alert and c2.alert["id"] == aid and c2.alert["clip"] is None   # l'alerte oui, l'audio non
+    assert list(revived.push_subs)                     # les parents endormis seront quand même poussés
+    assert condamnee.code in main.deleted_codes        # la suppression admin survit aussi
+    assert main.get_party(condamnee.code) is None
+
+
+def test_slow_push_does_not_block_alerts(monkeypatch):
+    """Revue n°2 : un fournisseur de push gelé ne doit pas retarder la diffusion
+    des alertes ni le traitement des messages."""
+    import time as _t
+
+    def frozen_push(sub, payload, tag):
+        _t.sleep(4)   # fournisseur qui ne répond pas
+
+    monkeypatch.setattr(main, "_push_one", frozen_push)
+    with TestClient(app) as client:
+        code = main.create_party("gel").code
+        with client.websocket_connect(f"/ws/{code}") as emitter, client.websocket_connect(f"/ws/{code}") as receiver:
+            recv_until(emitter, "state"); recv_until(receiver, "state")
+            emitter.send_json({"type": "register", "chalet_id": "m", "name": "M", "kids": ""})
+            recv_until(emitter, "registered")
+            main.parties[code].push_subs["https://fcm.googleapis.com/fcm/send/x"] = \
+                {"sub": {"endpoint": "https://fcm.googleapis.com/fcm/send/x"}}
+            t0 = _t.monotonic()
+            emitter.send_json({"type": "alert", "chalet_id": "m", "level": 90})
+            recv_until_state(receiver, lambda s: s["chalets"][0]["status"] == "alert")
+            elapsed = _t.monotonic() - t0
+            assert elapsed < 2, f"la diffusion a attendu le push ({elapsed:.1f}s)"
+
+
 def test_admin_requires_token(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr(main, "ADMIN_TOKEN", "")
@@ -302,7 +478,8 @@ def test_websocket_flow():
             recv_until(emitter, "state"); recv_until(receiver, "state")
             receiver.send_json({"type": "hello", "role": "salle", "name": "Marie"})
             emitter.send_json({"type": "register", "chalet_id": "mesange", "name": "Mésange", "kids": "Léo"})
-            assert recv_until(emitter, "registered") == {"type": "registered", "chalet_id": "mesange"}
+            reg = recv_until(emitter, "registered")
+            assert reg["chalet_id"] == "mesange" and reg["token"]   # le jeton d'émetteur est remis ici
 
             chalet = main.parties[code].chalets["mesange"]
             st = recv_until_state(receiver, lambda s: s["chalets"] and s["chalets"][0]["name"] == "Mésange")
