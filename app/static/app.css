@@ -153,6 +153,8 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 /* ---------- Salle ---------- */
 .arm-card { border-color: rgba(255,214,51,.5); }
 .arm-card p { margin: 0; color: var(--muted); }
+.salle-status { font-size: var(--t-xs); color: var(--muted); margin-bottom: var(--s2); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+#btn-push-test { margin-bottom: var(--s3); }
 .own-picker { display: flex; align-items: center; gap: var(--s2); font-size: var(--t-sm); color: var(--muted); margin-bottom: var(--s4); }
 .own-picker.todo label { color: var(--orange); font-weight: 700; }
 .own-picker.todo select { border-color: var(--orange); }
@@ -171,7 +173,10 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
   color: var(--text); font-weight: 600;
 }
 .tile .meta { display: flex; justify-content: space-between; gap: var(--s3); font-size: var(--t-xs); color: var(--muted); }
-.tile .meta:empty, .tile .kids:empty { display: none; }
+.tile .meta:empty, .tile .kids:empty, .tile .meta[hidden] { display: none; }
+/* Le span de durée existe toujours (on y écrit sans reconstruire la tuile) mais,
+   vide, il ne doit pas pousser la batterie à l'autre bout de la ligne. */
+.tile .meta .line:empty { display: none; }
 .overlay-kids:empty { display: none; }
 .tile .status { font-weight: 700; font-size: var(--t-sm); letter-spacing: .03em; text-transform: uppercase; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 .tile .listening { color: var(--amber); text-transform: none; letter-spacing: 0; font-weight: 600; font-size: var(--t-xs); }
@@ -224,6 +229,9 @@ input[type=text]:focus, select:focus { border-color: var(--amber); }
 .overlay-name { font-size: clamp(2.6rem, 10vw, 7rem); font-weight: 900; line-height: 1.05; margin: var(--s1) 0; }
 .overlay-kids { font-size: clamp(1.9rem, 7.5vw, 4.5rem); font-weight: 700; line-height: 1.1; margin-top: var(--s2); }
 .overlay-since { font-size: clamp(1rem, 2.4vw, 1.6rem); opacity: .8; margin-top: var(--s2); font-variant-numeric: tabular-nums; }
+.overlay-more { font-size: clamp(.95rem, 2.2vw, 1.4rem); font-weight: 700; margin-top: var(--s3);
+  background: rgba(0,0,0,.35); border-radius: 999px; padding: var(--s2) var(--s4); display: inline-block; }
+body.sono .overlay-more { font-size: clamp(1.4rem, 3vw, 2.2rem); }
 .overlay-actions { display: flex; flex-direction: column; gap: var(--s3); align-items: center; margin-top: var(--s5); }
 .overlay-actions .btn { min-width: 15rem; }
 .overlay .btn.ghost { color: #fff; }

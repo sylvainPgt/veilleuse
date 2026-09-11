@@ -6,4 +6,10 @@ services:
     environment:
       VEILLEUSE_HEARTBEAT_TIMEOUT: "45"
       VEILLEUSE_ESCALATION_DELAY: "90"
+      # VEILLEUSE_SECRET et VEILLEUSE_ADMIN_TOKEN : à définir dans l'hébergeur, jamais ici.
+      VEILLEUSE_STATE_FILE: "/srv/data/state.json"
+    volumes:
+      # Persistance minimale (soirées, chalets attendus, abonnements push — jamais
+      # d'audio). Sur Coolify : ajouter un « persistent storage » monté sur /srv/data.
+      - ./data:/srv/data
     restart: unless-stopped

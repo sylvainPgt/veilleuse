@@ -131,7 +131,7 @@
           <input id="in-threshold" type="range" min="10" max="95" value="55" aria-label="Seuil de déclenchement">
         </div>
         <div class="thr-legend"><span>bruit de la pièce</span><span><b>▮</b> seuil</span></div>
-        <small class="hint">Parlez normalement : la couleur doit rester à gauche de la poignée. Un pleur doit la dépasser.</small>
+        <small class="hint">Parlez normalement : la couleur doit rester à gauche de la poignée. Un pleur doit la dépasser. Poignée vers la droite = seuil plus haut = moins d'alertes.</small>
       </label>
     </div>
     <button type="submit" class="btn primary">Allumer la veilleuse</button>
@@ -152,6 +152,7 @@
     <div class="meter big"><div id="run-level" class="meter-rest"></div><div id="run-thr" class="meter-thr"></div></div>
     <div id="run-msg" class="run-msg">Les parents sont prévenus dès qu'un bruit dépasse le seuil.</div>
     <button id="btn-remic" class="btn primary hidden"><svg class="ic"><use href="#i-mic"/></svg> Réactiver le micro</button>
+    <button id="btn-retake" class="btn primary hidden">Reprendre la surveillance ici</button>
     <button id="btn-cancel" class="btn secondary hidden">Fausse alerte — tout va bien</button>
     <div id="run-listen" class="run-listen hidden"></div>
   </div>
@@ -165,7 +166,7 @@
     </ul>
   </div>
   <div class="run-actions">
-    <button id="btn-test" class="btn secondary"><svg class="ic"><use href="#i-hand"/></svg> Tester l'alerte</button>
+    <button id="btn-test" class="btn secondary"><svg class="ic"><use href="#i-bell"/></svg> Faire sonner la salle (test)</button>
     <button id="btn-stop" class="btn ghost">Éteindre la veilleuse</button>
   </div>
 </section>
@@ -181,6 +182,9 @@
     <p>Pour sonner et vibrer malgré la musique, ce téléphone doit être « réveillé » une fois — acceptez la demande de notifications qui suivra. Gardez ensuite cette page ouverte : un téléphone verrouillé au fond d'une poche peut rater une alerte, c'est l'écran de la sono qui couvre tout le monde.</p>
     <button id="btn-arm" class="btn primary"><svg class="ic"><use href="#i-bell"/></svg> Activer les alertes sur ce téléphone</button>
   </div>
+  <!-- Quatre vérités séparées : son local, permission, push confirmé, connexion. -->
+  <div id="salle-status" class="salle-status hidden" aria-live="polite"></div>
+  <button id="btn-push-test" class="btn ghost small hidden"><svg class="ic"><use href="#i-bell"/></svg> Tester mes notifications</button>
   <div class="own-picker">
     <label for="sel-own">Mon chalet</label>
     <select id="sel-own"><option value="">— aucun / je veille sur tous —</option></select>
@@ -205,6 +209,7 @@
     <div class="overlay-name" id="ov-name"></div>
     <div class="overlay-kids" id="ov-kids"></div>
     <div class="overlay-since" id="ov-since"></div>
+    <div class="overlay-more hidden" id="ov-more"></div>
     <div class="overlay-actions">
       <button id="ov-ack" class="btn primary huge">J'y vais</button>
       <button id="ov-listen" class="btn secondary"><svg class="ic"><use href="#i-speaker"/></svg> Écouter</button>
