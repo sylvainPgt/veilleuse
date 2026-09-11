@@ -92,20 +92,26 @@ Veilleuse entend, elle ne voit pas : elle détecte les pleurs et les bruits, com
 
 **Watchdog serveur.** Toutes les 2 secondes : un chalet sans heartbeat depuis 45 s devient « muet » ; une alerte non acquittée depuis 90 s passe en « escalade ». Les deux délais se règlent par variables d'environnement (`VEILLEUSE_HEARTBEAT_TIMEOUT`, `VEILLEUSE_ESCALATION_DELAY`).
 
-**Aucune donnée conservée.** Tout est en mémoire, rien n'est écrit sur disque. Un clip s'efface dès que l'alerte est réglée, et de toute façon au bout de deux minutes (`VEILLEUSE_CLIP_TTL`) — clip d'alerte compris : aucun son d'un chalet ne traîne sur le serveur, et les réponses de l'API sont servies en `no-store`. Les soirées s'oublient toutes seules : 15 minutes pour une soirée restée vide (`VEILLEUSE_PARTY_EMPTY_TTL`), 24 heures sans activité pour les autres (`VEILLEUSE_PARTY_TTL`).
+**Persistance minimale, jamais d'audio.** Un petit fichier JSON local (`VEILLEUSE_STATE_FILE`, `data/state.json` par défaut, vide pour désactiver) garde le strict nécessaire à la reprise : soirées, chalets attendus, alertes en cours **sans leur clip**, abonnements push, suppressions admin. Les clips audio, eux, ne touchent jamais le disque : effacés à la résolution et au bout de deux minutes (`VEILLEUSE_CLIP_TTL`), API servie en `no-store`. Les soirées s'oublient toutes seules (15 min si vide — `VEILLEUSE_PARTY_EMPTY_TTL` —, 24 h sans activité — `VEILLEUSE_PARTY_TTL`) et le fichier suit. En Docker, montez un volume sur `/srv/data` (sur Coolify : « persistent storage »).
 
-**Un redémarrage du serveur ne casse pas les liens.** Les identifiants de soirée sont signés (HMAC) avec `VEILLEUSE_SECRET` : un lien valide recrée sa soirée vide au premier retour, et les chalets se ré-enregistrent tout seuls. **Définissez `VEILLEUSE_SECRET`** (une longue valeur aléatoire) en production — sans elle, un secret est tiré à chaque démarrage et les liens meurent avec le processus. Un redémarrage du serveur vide l'état ; les émetteurs se ré-enregistrent automatiquement à la reconnexion.
+**Un redémarrage du serveur est un non-événement.** Les identifiants de soirée sont signés (HMAC) avec `VEILLEUSE_SECRET` et l'état est rechargé depuis le fichier : les chalets attendus réapparaissent — **« muets », honnêtement, jusqu'au retour de leur heartbeat** — et une alerte en cours reprend là où elle en était. **Définissez `VEILLEUSE_SECRET`** (une longue valeur aléatoire) en production : sans elle, liens et abonnements push meurent avec le processus.
+
+**Le cycle d'une alerte est complet.** Chaque alerte porte un identifiant : un « C'est réglé » resté coincé dans une coupure réseau ne peut pas effacer l'alerte suivante. Après « J'y vais », un rappel part si rien n'est réglé au bout de `VEILLEUSE_ACK_REMINDER` (4 min par défaut) ; « Renfort » re-sonne tout le monde, « Je ne peux plus » rend l'alerte et relance l'escalade. Un « chalet muet » se prend en charge (« Je vais vérifier ») sans jamais reverdir la tuile : seul le retour du heartbeat le fait. Un redémarrage du serveur vide l'état ; les émetteurs se ré-enregistrent automatiquement à la reconnexion.
 
 ### Protocole WebSocket (`/ws/{code}`)
 
 | Sens | Message | Rôle |
 |---|---|---|
-| → | `{"type":"register","chalet_id","name","kids"}` | Émetteur : rejoint (ou reprend) un chalet |
+| → | `{"type":"register","chalet_id","name","kids","token?"}` | Émetteur : rejoint un chalet ; le reprendre exige le jeton reçu à la première inscription (`registered` le contient, `register_denied` sinon) |
 | → | `{"type":"hb","level","battery","threshold"}` | Émetteur : battement de cœur |
 | → | `{"type":"noise","level"}` | Émetteur : bruit court |
 | → | `{"type":"alert","level","clip?","reason?"}` | Émetteur : alerte (le clip peut arriver dans un second message) |
 | → | `{"type":"hello","role":"salle","name"}` | Récepteur : s'identifie |
-| → | `{"type":"ack","chalet_id","by"}` / `resolve` | Récepteur : j'y vais / c'est réglé |
+| → | `{"type":"ack","chalet_id","aid","by"}` / `resolve` | Récepteur : j'y vais / c'est réglé — `aid` cible l'occurrence d'alerte ; une action périmée reçoit `action_stale` |
+| → | `{"type":"release","chalet_id","aid","by"}` | Récepteur : « je ne peux plus y aller » — l'alerte redevient à prendre, chrono d'escalade relancé |
+| → | `{"type":"reinforce","chalet_id","by"}` | Récepteur : demande de renfort — re-sonne tout le monde sans lâcher la prise en charge |
+| → | `{"type":"check","chalet_id","by"}` | Récepteur : « je vais vérifier » un chalet muet — visible partout, mais la tuile ne reverdit qu'au retour du heartbeat |
+| → | `{"type":"push_sub","sub"}` / `push_test` | Récepteur : abonnement Web Push (confirmé par `push_ok`) / notification d'essai vers soi-même |
 | → | `{"type":"listen","chalet_id","by"}` | Récepteur : fais-moi entendre ce qui se passe maintenant |
 | ← | `{"type":"clip_request","seconds","by"}` | Serveur → émetteur seul : enregistre et renvoie |
 | → | `{"type":"clip","chalet_id","clip"}` | Émetteur : voici l'enregistrement demandé |
@@ -131,7 +137,7 @@ Prévoyez de tester **sur place, dans un chalet, avec l'opérateur de chaque cou
 
 - **L'app doit rester au premier plan sur le téléphone du chalet**, écran allumé. iOS et Android coupent le micro d'un onglet en arrière-plan. Le wake lock empêche la mise en veille (une pastille ⚠️ s'affiche s'il n'est pas disponible, notamment avant iOS 16.4 — désactivez alors le verrouillage automatique), mais si quelqu'un verrouille l'écran, le chalet passera « muet » au bout de 45 secondes — c'est voulu, on préfère une fausse alerte à un faux silence.
 - **Un appel entrant** sur le téléphone du chalet interrompt le micro (surtout sur iPhone). D'où le mode « Ne pas déranger ».
-- **La page ouverte reste le chemin le plus fiable.** La sonnerie forte vient d'elle. En complément, les alertes sont **poussées en Web Push** : elles arrivent en notification même app fermée ou téléphone verrouillé — fiable sur Android, et sur iPhone à condition d'avoir ajouté Veilleuse à l'écran d'accueil (iOS 16.4+). Les clés de push dérivent de `VEILLEUSE_SECRET` : rien d'autre à configurer, mais un secret stable est indispensable. L'écran de la sono reste le filet de sécurité de tout le monde.
+- **La page ouverte reste le chemin le plus fiable.** La sonnerie forte vient d'elle. En complément, les alertes sont **poussées en Web Push** (service worker servi à la racine, `/sw.js` — indispensable pour contrôler la page) : notification même app fermée ou téléphone verrouillé, fiable sur Android, et sur iPhone à condition d'avoir ajouté Veilleuse à l'écran d'accueil (iOS 16.4+). L'app **ne promet rien qu'elle n'ait prouvé** : la ligne d'état distingue son, permission, push confirmé par le serveur et connexion, et un bouton « Tester mes notifications » en fait la démonstration. Les clés dérivent de `VEILLEUSE_SECRET`. L'écran de la sono reste le filet de tout le monde.
 - **Pas de flux continu** (volontairement) : en réseau faible, un flux permanent est la première chose qui casse. À la place, le bouton **« 🔊 Écouter »** demande au chalet d'enregistrer 10 secondes et de les renvoyer — une écoute à la demande, en quasi-direct, qui garde les mêmes propriétés réseau que le reste. Le chalet affiche qui écoute et le journal le trace.
 - Ce n'est **pas un dispositif médical ni de sécurité** : c'est un outil d'entraide entre parents pour une soirée, pas un remplacement de la surveillance.
 

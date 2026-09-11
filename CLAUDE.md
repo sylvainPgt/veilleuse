@@ -12,7 +12,11 @@ Le PC de la sono affiche aussi le tableau en plein écran (mode `?mode=sono`).
   Ça doit marcher en 3G faible.
 - **Le silence est une alerte.** Sans heartbeat pendant 45 s → « chalet muet » affiché partout.
 - **Alerte non acquittée 90 s → escalade** rouge clignotante sur tous les récepteurs.
-- **Aucun compte, aucune persistance.** Un code de soirée, tout en mémoire.
+- **Aucun compte.** Accès par lien privé signé (le fragment `#...` est la clé de la soirée).
+- **Persistance minimale, jamais d'audio** (évolution décidée par Sylvain, sept. 2026) :
+  `VEILLEUSE_STATE_FILE` (JSON local, volume `/srv/data` en Docker) garde soirées, chalets
+  attendus, alertes sans clip et abonnements push pour survivre aux redémarrages. Les clips
+  audio restent en mémoire seule.
 - **Zéro dépendance front** : HTML/CSS/JS vanilla dans `app/static/`. Ne pas introduire de
   framework ou de bundler.
 - Interface en français, ton simple et chaleureux.
@@ -30,12 +34,23 @@ Le PC de la sono affiche aussi le tableau en plein écran (mode `?mode=sono`).
 - Test navigateur avec micro simulé (Playwright/Chromium) : voir `docs/e2e.py`
   (`python docs/e2e.py`, serveur lancé sur :8000). Il produit les captures de `docs/`.
 
-## État au 25 août 2026
-V1 fonctionnelle, testée avec micro simulé uniquement. Jamais testée sur un vrai téléphone.
+## Points d'architecture à ne pas casser (appris à la dure)
+- Le service worker est **servi à la racine** (`/sw.js`, route FastAPI) : depuis `/static/`
+  sa portée n'aurait couvert que `/static/` et le push serait mort-né (bug réel, un mois).
+- Jamais d'attente sans délai sur `serviceWorker.ready` (voir `swReady()` dans app.js).
+- Les envois push et les diffusions WebSocket sont **hors du chemin critique**
+  (`schedule_pushes`, broadcast parallèle borné à 3 s par socket).
+- Chaque alerte porte un `aid` ; les actions humaines ne se mettent jamais en file hors ligne.
+- `hello` ne donne jamais le rôle émetteur ; reprendre un chalet exige son jeton (`token`).
+- Endpoints push limités aux vrais services (FCM/APNs/Mozilla/WNS) — anti-SSRF.
 
-## Prochaines étapes envisagées (à valider avec Sylvain)
-1. Test réel : deux téléphones, un vrai pleur, couper la 4G 50 s → « chalet muet » puis retour.
-2. Vérifier iOS Safari : wake lock, micro au premier plan pendant 1 h, MediaRecorder `audio/mp4`.
-3. Régler le seuil par défaut et la courbe dB→% d'après les vrais essais.
-4. Éventuellement : planification des rondes, notifications push web (Android), écoute en
-   direct WebRTC à la demande si le réseau le permet.
+## État au 11 septembre 2026
+Trois revues externes intégralement traitées. 41 tests backend, batteries navigateur
+(parcours, reprises, redémarrage réel, muet/escalade/rappel/renfort). Toujours **jamais
+validé sur un vrai iPhone** ; Android testé partiellement par Sylvain (Pixel 9).
+
+## Prochaines étapes
+1. Répétition terrain (checklist dans la conversation) : iPhone + Android, écran verrouillé,
+   appel entrant, 4G coupée, deux « J'y vais » simultanés, redéploiement en pleine soirée.
+2. Régler le seuil par défaut et la courbe dB→% d'après les vrais essais.
+3. Éventuellement : écoute en direct WebRTC à la demande si le réseau du domaine le permet.
