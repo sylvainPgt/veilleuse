@@ -1,0 +1,36 @@
+name: Tests serveur et navigateur
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VEILLEUSE_STATE_FILE: ""
+      VEILLEUSE_SECRET: "secret-de-test-ci-sans-donnee-reelle"
+      VEILLEUSE_ADMIN_TOKEN: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer les dépendances Python
+        run: python -m pip install -r requirements-dev.txt
+      - name: Installer Chromium et ses dépendances système
+        run: python -m playwright install --with-deps chromium
+      - name: Tests serveur
+        run: python -m pytest
+      - name: Scénarios navigateur (successifs, arrêt au premier échec)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for scenario in e2e_taps.py e2e_incidents.py e2e_identity.py e2e_resume.py e2e_restart.py; do
+            python "docs/$scenario"
+          done
