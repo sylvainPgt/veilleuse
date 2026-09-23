@@ -1,5 +1,7 @@
 """Tests du backend : logique métier et protocole WebSocket."""
+import os
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -615,21 +617,38 @@ def test_health_exposes_persistence_status(tmp_path, monkeypatch):
     assert client.get("/api/health").json()["persistence"] == "error"
 
 
-def test_admin_status_distinguishes_write_ok_from_durable(tmp_path, monkeypatch):
-    """« persistence: ok » dit seulement que l'écriture a réussi. La durabilité du
-    volume est une AUTRE question, exposée séparément."""
+@pytest.mark.parametrize("parent_dev, separate, note", [
+    (11, False, "ATTENTION"),       # écriture réussie sur la couche racine
+    (12, True, "Volume distinct"), # écriture réussie sur un autre volume
+    (None, None, "ATTENTION"),     # comparaison impossible : ne pas prétendre durable
+])
+def test_admin_status_distinguishes_write_ok_from_durable(tmp_path, monkeypatch,
+                                                            parent_dev, separate, note):
+    """L'écriture peut réussir sans prouver que le chemin survit au redéploiement.
+    Simuler les périphériques de / et du répertoire d'état, pas les montages du CI.
+    """
     monkeypatch.setattr(main, "ADMIN_TOKEN", "s3cret")
     monkeypatch.setattr(main, "STATE_FILE", str(tmp_path / "state.json"))
     main._admin_fails.clear()
     main.mark_dirty(); assert main.save_state()
+    real_stat = os.stat
+
+    def stat_with_mount(path, *args, **kwargs):
+        if os.fspath(path) == str(tmp_path):
+            if parent_dev is None:
+                raise OSError("volume inaccessible")
+            return SimpleNamespace(st_dev=parent_dev)
+        if os.fspath(path) == "/":
+            return SimpleNamespace(st_dev=11)
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(main.os, "stat", stat_with_mount)
     client = TestClient(app)
     d = client.get("/api/admin/status", headers={"X-Admin-Token": "s3cret"}).json()
     p = d["persistence"]
     assert p["status"] == "ok" and p["exists"] and p["bytes"] > 0
-    # tmp_path est sur le même système de fichiers que « / » ici : l'indicateur
-    # doit donc dire « pas de volume distinct », malgré une écriture réussie.
-    assert p["separate_volume"] is False
-    assert "ATTENTION" in p["note"]
+    assert p["separate_volume"] is separate
+    assert note in p["note"]
     assert client.get("/api/admin/status").status_code == 403   # protégé comme le reste
 
 

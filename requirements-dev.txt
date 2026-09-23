@@ -1,4 +1,5 @@
 -r requirements.txt
 pytest>=8
 httpx>=0.27
-playwright>=1.40   ; puis : python -m playwright install chromium (pour docs/e2e.py)
+playwright>=1.40
+# Puis : python -m playwright install chromium (pour les scénarios docs/e2e*.py)
