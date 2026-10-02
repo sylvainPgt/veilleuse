@@ -24,7 +24,7 @@ BASE = f"http://127.0.0.1:{PORT}"
 
 async def main() -> None:
     srv = start_server(PORT, VEILLEUSE_HEARTBEAT_TIMEOUT="5",
-                       VEILLEUSE_ESCALATION_DELAY="600", VEILLEUSE_ACK_REMINDER="6")
+                       VEILLEUSE_ESCALATION_DELAY="600", VEILLEUSE_ACK_REMINDER="15")
     async with async_playwright() as p:
         b = await p.chromium.launch()
         try:

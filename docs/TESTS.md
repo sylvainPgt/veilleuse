@@ -30,6 +30,7 @@ python docs/e2e_incidents.py    # :8795 — chalet muet, urgences multiples, ren
 python docs/e2e_identity.py     # :8796 — jetons par soirée, relève d'émetteur
 python docs/e2e_resume.py       # :8797 — reprise après rechargement
 python docs/e2e_restart.py      # :8791 — arrêt/redémarrage réel du processus
+python docs/e2e_home_parties.py # :8798 — soirées connues visibles dès le choix du rôle
 
 uvicorn app.main:app --port 8000 &   # e2e.py seul a besoin de ça
 python docs/e2e.py                    # captures du README
@@ -69,6 +70,15 @@ rôle ; « Retour » efface la reprise ; un lien vers une autre soirée l'emport
 **`e2e_restart.py` — le redémarrage.** Arrêt et relance réels du processus,
 pages laissées ouvertes, reconnexion automatique, et l'assertion qui compte :
 une alerte émise **après** le redémarrage atteint la salle.
+
+**`e2e_home_parties.py` — l'accueil sans inventaire public.** Un Chromium crée
+plusieurs soirées via l'interface, revient au choix chalet/salle et recharge :
+les soirées connues apparaissent avant de choisir le rôle, y compris avec le
+même nom ; un autre navigateur n'a pas leurs liens. Une puce remplit le lien
+sans entrer automatiquement ni modifier la soirée. L'historique est local à ce
+navigateur (pas de compte) et le serveur ne publie pas de liste de liens privés.
+Les liens locaux sont vérifiés à l'ouverture : 404 retire la soirée supprimée,
+une panne réseau conserve le lien. « Tout oublier » reste une action explicite.
 
 ## Ce qu'aucun de ces tests ne prouve
 

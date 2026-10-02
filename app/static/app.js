@@ -124,22 +124,21 @@
   };
   const linkFor = (code) => `${location.origin}/#${code}`;
 
-  // Historique local : il ne quitte jamais ce téléphone (localStorage), et il contient
-  // la clé de la soirée — donc il s'oublie tout seul, et on peut l'effacer à la main.
-  const RECENT_TTL = 7 * 24 * 3600 * 1000;
+  // Seuls les liens connus sur ce téléphone sont affichés : jamais de catalogue
+  // serveur qui divulguerait les clés privées des autres soirées.
   const recent = {
     all() {
-      const t = Date.now();
-      const list = store.get("recent", []).filter((p) => p.code && t - (p.ts || 0) < RECENT_TTL);
-      return list;
+      const list = store.get("recent", []);
+      if (!Array.isArray(list)) return [];
+      return list.filter((p) => p && typeof p.code === "string" && /^[a-z0-9-]{4,}$/.test(p.code))
+        .filter((p, i, valid) => valid.findIndex((v) => v.code === p.code) === i);
     },
     add(code, name) {
-      // Dédoublonne aussi par nom : recréer « Soirée Test » trois fois faisait
-      // trois puces identiques à l'écran — seule la plus récente compte.
+      // Le code, pas le nom, identifie la soirée : deux soirées peuvent partager un nom.
       const n = name || code;
-      const list = recent.all().filter((p) => p.code !== code && p.name !== n);
+      const list = recent.all().filter((p) => p.code !== code);
       list.unshift({ code, name: n, ts: Date.now() });
-      store.set("recent", list.slice(0, 6));
+      store.set("recent", list);
     },
     forget(code) { store.set("recent", recent.all().filter((p) => p.code !== code)); },
     clear() { store.set("recent", []); },
@@ -171,15 +170,36 @@
 
   function loadParties() {
     const list = recent.all();
-    $("home-parties").classList.toggle("hidden", createMode || !list.length);
+    $("home-parties").classList.toggle("hidden", !list.length);
     $("party-chips").innerHTML = list.map((p) =>
       `<span class="chip-wrap"><button type="button" class="btn chip" data-code="${esc(p.code)}">${esc(p.name)}</button>` +
       `<button type="button" class="btn chip-x" data-forget="${esc(p.code)}" aria-label="Oublier ${esc(p.name)}" title="Oublier cette soirée">×</button></span>`).join("");
   }
+  loadParties(); // dès l'arrivée, avant même le choix chalet / salle
+  // Seules les clés déjà connues sont interrogées ; une suppression serveur
+  // retire la puce, mais une panne réseau ne fait rien oublier.
+  async function refreshParties() {
+    for (const p of recent.all()) {
+      try {
+        const r = await fetch(`/api/party/${encodeURIComponent(p.code)}`);
+        if (!recent.all().some((known) => known.code === p.code)) continue;
+        if (r.status === 404) { recent.forget(p.code); loadParties(); }
+        else if (r.ok) {
+          const state = await r.json();
+          if (state.name && recent.all().some((known) => known.code === p.code && known.name !== state.name)) {
+            store.set("recent", recent.all().map((known) => known.code === p.code ? { ...known, name: state.name } : known));
+            loadParties();
+          }
+        }
+      } catch { /* hors ligne : on conserve les liens */ }
+    }
+  }
+  refreshParties();
   $("party-chips").addEventListener("click", (e) => {
     const f = e.target.closest("[data-forget]");
     if (f) { recent.forget(f.dataset.forget); loadParties(); return toast("Soirée oubliée sur ce téléphone"); }
     const b = e.target.closest("[data-code]"); if (!b) return;
+    if (createMode) $("btn-toggle-create").click();
     $("in-code").value = linkFor(b.dataset.code);
     document.querySelectorAll("#party-chips .chip").forEach((c) => c.classList.toggle("exact", c === b));
     const step = ROLE_STEP[chosenRole];
