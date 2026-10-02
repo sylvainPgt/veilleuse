@@ -73,9 +73,13 @@ async def main():
                 await other_page.goto(f"http://127.0.0.1:{port}/")
                 assert await other_page.locator("#party-chips .chip").count() == 0, "Pas de liste publique des soirées"
                 await outsider.close()
+                await page.click("#btn-forget-all")
+                assert await page.locator("#party-chips .chip").count() == 0
+                await page.reload()
+                assert await page.locator("#party-chips .chip").count() == 0
                 await ctx.close()
                 await browser.close()
-            print("OK — accueil vide, création, retour/rechargement, noms identiques, accès local isolé")
+            print("OK — accueil vide, création, retour/rechargement, doublons, lien absent, isolation, effacement")
         finally:
             server.terminate()
             server.wait(timeout=10)
