@@ -136,13 +136,19 @@ async def main() -> None:
                 await sa.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
                 await sa.mouse.down()
                 zebre.beating = True                           # Zèbre revient → l'ordre doit changer
-                await asyncio.sleep(2.5)                       # deux cycles de rafraîchissement passent
+                await sa.wait_for_function(
+                    "async () => (await (await fetch('/api/party/" + code + "')).json())"
+                    ".chalets.some(c => c.name === 'Zèbre' && c.status === 'ok')",
+                    timeout=15000)                            # preuve que le serveur a bien basculé
                 ordre_pendant = await sa.evaluate(
                     "[...document.querySelectorAll('.tile .name')].map(e => e.textContent.trim())")
                 same_node = await sa.evaluate("(a) => a === document.querySelector('.tile [data-listen]')",
                                               node_before)
                 await sa.mouse.up()
-                await asyncio.sleep(1.2)
+                await sa.wait_for_function(
+                    "before => JSON.stringify([...document.querySelectorAll('.tile .name')]"
+                    ".map(e => e.textContent.trim())) !== JSON.stringify(before)",
+                    arg=ordre_avant, timeout=15000)
                 ordre_apres = await sa.evaluate(
                     "[...document.querySelectorAll('.tile .name')].map(e => e.textContent.trim())")
                 st = await state(sa, PORT, code)
