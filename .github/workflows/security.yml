@@ -1,0 +1,78 @@
+name: Sécurité
+
+# Modèle commun (source : sylvainPgt/infra-vps/templates/app-repo). Ne pas
+# diverger : corriger le modèle puis recopier.
+# Ce workflow ne lit AUCUN secret de déploiement (Vercel, Coolify, Hetzner).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"   # lundi 05:00 UTC : nouvelles CVE sur du code inchangé
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Binaire officiel, version figée, empreinte vérifiée en dur : pas d'action tierce,
+      # pas de jeton GitHub nécessaire (l'action gitleaks exige pull-requests: read).
+      - name: gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks git --redact --verbose --exit-code 1 .
+
+  dependances:
+    name: Dépendances vulnérables (osv-scanner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Lit les lockfiles (package-lock, pnpm-lock, requirements, uv.lock, poetry.lock...)
+      # sans rien installer : aucun script preinstall/postinstall ne s'exécute.
+      - uses: google/osv-scanner-action/osv-scanner-action@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+        with:
+          scan-args: |-
+            --recursive
+            ./
+
+  sast:
+    name: Analyse statique (Semgrep CE)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # CodeQL n'est pas disponible sur les dépôts privés d'un compte gratuit :
+      # Semgrep CE, en local, sans envoi de code vers un service tiers.
+      - run: pip install --quiet "semgrep==1.182.1"
+      - run: semgrep scan --config p/default --config p/secrets --error --quiet --metrics=off .
+
+  workflows:
+    name: Workflows (zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          advanced-security: false
