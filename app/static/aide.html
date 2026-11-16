@@ -31,6 +31,8 @@
   .topbar .name img { width: 24px; height: 24px; }
 
   .aide { padding-top: var(--s5); }
+  #sommaire, .aide section[id] { scroll-margin-top: 4.5rem; }
+  .back-to-summary { display: inline-flex; align-items: center; min-height: 44px; color: var(--amber); text-underline-offset: .2em; }
   .aide h2 { font-size: var(--t-lg); margin: 0 0 var(--s3); scroll-margin-top: 4.5rem; }
   .aide section { margin-top: var(--s6); padding-top: var(--s5); border-top: 1px solid var(--line); }
   .aide p, .aide li { color: var(--text); line-height: 1.55; }
@@ -94,7 +96,7 @@
   <div class="hero">
     <h1>Comment ça marche&nbsp;?</h1>
     <p class="tagline">Les enfants dorment dans les chalets, vous dansez dans la salle, tout le monde veille.</p>
-    <ul class="toc">
+    <ul class="toc" id="sommaire" tabindex="-1">
       <li><a href="#principe">Le principe</a></li>
       <li><a href="#coucher">Au coucher</a></li>
       <li><a href="#salle">À la salle</a></li>
@@ -112,6 +114,7 @@
       <li><svg class="ic"><use href="#i-music"/></svg><span><strong>Aller à la salle</strong> — ce téléphone reçoit les alertes de tous les chalets.</span></li>
     </ul>
     <p class="note">L'écran de la sono affiche le même tableau en grand&nbsp;: c'est le filet collectif quand les téléphones restent dans les poches ou ne peuvent pas sonner.</p>
+    <a class="back-to-summary" href="#sommaire">↑ Retour au sommaire</a>
   </section>
 
   <section id="coucher">
@@ -122,6 +125,7 @@
       <li>«&nbsp;Allumer la veilleuse&nbsp;», puis la petite checklist&nbsp;: chargeur branché, mode «&nbsp;Ne pas déranger&nbsp;», écran allumé avec la page au premier plan.</li>
       <li>Avant de partir, <strong>tapez dans les mains</strong>&nbsp;: c'est le seul test qui prouve que le micro et le seuil fonctionnent — le bouton «&nbsp;Faire sonner la salle&nbsp;» ne teste que la transmission. Votre conjoint doit recevoir l'alerte <strong>et taper «&nbsp;J'y vais&nbsp;»</strong>&nbsp;: son prénom s'affiche alors sur l'écran du chalet. Pas de prénom, pas de preuve. Appuyez ensuite sur «&nbsp;Fausse alerte — tout va bien&nbsp;», et allez danser.</li>
     </ol>
+    <a class="back-to-summary" href="#sommaire">↑ Retour au sommaire</a>
   </section>
 
   <section id="salle">
@@ -138,6 +142,7 @@
       <li><span class="dot m"></span><span><strong>Gris «&nbsp;chalet muet&nbsp;»</strong> — plus de nouvelles depuis 45 secondes (téléphone verrouillé, batterie vide, réseau perdu). Tapez <strong>«&nbsp;Je vais vérifier&nbsp;»</strong>&nbsp;: tout le monde voit que vous y allez, et la tuile ne redevient verte que quand le babyphone redonne réellement des nouvelles.</span></li>
     </ul>
     <p class="note">Si un bandeau rouge «&nbsp;Connexion au serveur perdue&nbsp;» apparaît, les tuiles ne montrent plus que le dernier état connu&nbsp;: la surveillance n'est plus fiable jusqu'au retour de la connexion.</p>
+    <a class="back-to-summary" href="#sommaire">↑ Retour au sommaire</a>
   </section>
 
   <section id="sonne">
@@ -146,6 +151,7 @@
     <p>Si personne ne répond en 90 secondes, l'alerte passe en rouge clignotant sur tous les écrans, y compris celui de la sono — le DJ peut baisser la musique et l'annoncer au micro.</p>
     <p class="note">Le bouton <span class="ui"><svg class="ic solid"><use href="#i-play"/></svg> Écouter l'alerte</span> fait entendre les 4 secondes enregistrées au moment où ça a sonné.</p>
     <p>Et si c'est une fausse alerte&nbsp;— le test des mains, ou vous étiez encore en train de border&nbsp;— le téléphone resté au chalet affiche <strong>«&nbsp;Fausse alerte, tout va bien&nbsp;»</strong>&nbsp;: un appui et tous les écrans se calment, sans que personne ait à traverser le domaine.</p>
+    <a class="back-to-summary" href="#sommaire">↑ Retour au sommaire</a>
   </section>
 
   <section id="ecouter">
@@ -153,6 +159,7 @@
     <p>Sur n'importe quelle tuile, le bouton <span class="ui"><svg class="ic"><use href="#i-speaker"/></svg> Écouter</span> demande au téléphone du chalet d'enregistrer 10 secondes et de vous les envoyer. Comptez une quinzaine de secondes entre l'appui et le son. Vous pouvez réappuyer autant de fois que nécessaire, et le bouton <span class="ui"><svg class="ic"><use href="#i-replay"/></svg> Réécouter</span> rejoue le dernier enregistrement — pratique si votre téléphone refuse de lancer le son tout seul.</p>
     <p>Ce n'est pas une écoute permanente, et c'est volontaire&nbsp;: un flux continu serait la première chose à casser sur un réseau faible, justement au mauvais moment.</p>
     <p class="note">Par respect pour les autres familles, l'écran du chalet affiche le prénom de la personne qui écoute, et le journal de la soirée le note.</p>
+    <a class="back-to-summary" href="#sommaire">↑ Retour au sommaire</a>
   </section>
 
   <div class="card">
