@@ -36,3 +36,31 @@ jobs:
           for scenario in e2e_taps.py e2e_incidents.py e2e_identity.py e2e_resume.py e2e_restart.py e2e_home_parties.py; do
             python "docs/$scenario"
           done
+
+  container:
+    name: Test du conteneur non-root
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Construire et tester la persistance sur un volume neuf
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --tag veilleuse-ci .
+          docker volume create veilleuse-ci-data
+          trap 'docker rm --force veilleuse-ci >/dev/null 2>&1 || true; docker volume rm veilleuse-ci-data >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name veilleuse-ci \
+            --publish 127.0.0.1:8000:8000 \
+            --mount type=volume,source=veilleuse-ci-data,target=/srv/data \
+            --env VEILLEUSE_STATE_FILE=/srv/data/state.json \
+            --env VEILLEUSE_SECRET="$(openssl rand -hex 32)" veilleuse-ci
+          curl --fail --silent --show-error --retry 20 --retry-connrefused \
+            --retry-delay 1 http://127.0.0.1:8000/api/health > /dev/null
+          docker exec veilleuse-ci sh -ec 'test "$(id -u)" = 10001 && test -w /srv/data'
+          curl --fail --silent --show-error -H 'Content-Type: application/json' \
+            --data '{"name":"Soirée de test CI"}' http://127.0.0.1:8000/api/parties > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/health | \
+            python3 -c 'import json, sys; x = json.load(sys.stdin); assert x["persistence"] == "ok" and x["parties"] == 1'
