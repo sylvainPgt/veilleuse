@@ -57,10 +57,11 @@ jobs:
             --mount type=volume,source=veilleuse-ci-data,target=/srv/data \
             --env VEILLEUSE_STATE_FILE=/srv/data/state.json \
             --env VEILLEUSE_SECRET="$(openssl rand -hex 32)" veilleuse-ci
-          curl --fail --silent --show-error --retry 20 --retry-connrefused \
+          curl --fail --silent --show-error --retry 20 --retry-all-errors \
             --retry-delay 1 http://127.0.0.1:8000/api/health > /dev/null
           docker exec veilleuse-ci sh -ec 'test "$(id -u)" = 10001 && test -w /srv/data'
           curl --fail --silent --show-error -H 'Content-Type: application/json' \
             --data '{"name":"Soirée de test CI"}' http://127.0.0.1:8000/api/parties > /dev/null
-          curl --fail --silent --show-error http://127.0.0.1:8000/api/health | \
-            python3 -c 'import json, sys; x = json.load(sys.stdin); assert x["persistence"] == "ok" and x["parties"] == 1'
+          health_result="$(mktemp)"
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/health --output "$health_result"
+          python3 -c 'import json, sys; x = json.load(sys.stdin); assert x["persistence"] == "ok" and x["parties"] == 1' < "$health_result"
