@@ -19,6 +19,8 @@ import time
 
 from playwright.async_api import async_playwright
 
+from _harness import local_request
+
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
 ENV = {**os.environ, "VEILLEUSE_SECRET": "secret-stable-pour-le-test"}
@@ -31,11 +33,11 @@ def start_server() -> subprocess.Popen:
         cwd=os.path.join(os.path.dirname(__file__), ".."),
         env=ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.time() + 15
-    import urllib.request
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(BASE + "/api/health", timeout=1)
-            return proc
+            if local_request(PORT, "GET", "/api/health", timeout=1)[0] == 200:
+                return proc
+            time.sleep(0.3)
         except OSError:
             time.sleep(0.3)
     raise RuntimeError("le serveur n'a pas démarré")

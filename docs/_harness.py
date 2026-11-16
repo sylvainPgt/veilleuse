@@ -9,7 +9,7 @@ import json
 import os
 import subprocess
 import time
-import urllib.request
+from http.client import HTTPConnection
 
 from websockets.asyncio.client import connect
 
@@ -27,21 +27,34 @@ def start_server(port: int, **env: str) -> subprocess.Popen:
     deadline = time.time() + 20
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1)
-            return proc
+            if local_request(port, "GET", "/api/health", timeout=1)[0] == 200:
+                return proc
+            time.sleep(0.3)
         except OSError:
             time.sleep(0.3)
     proc.terminate()
     raise RuntimeError(f"le serveur n'a pas démarré sur :{port}")
 
 
+def local_request(port, method, path, *, timeout, data=None):
+    conn = HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        headers = {"Content-Type": "application/json"} if data is not None else {}
+        conn.request(method, path, body=data, headers=headers)
+        response = conn.getresponse()
+        return response.status, response.read()
+    finally:
+        conn.close()
+
+
 def create_party(port: int, name: str) -> str:
     """Crée une soirée et renvoie son identifiant signé."""
-    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/parties",
-                                 data=json.dumps({"name": name}).encode(),
-                                 headers={"Content-Type": "application/json"})
-    return json.loads(urllib.request.urlopen(req, timeout=10).read())["code"]
-
+    status, body = local_request(
+        port, "POST", "/api/parties", timeout=10, data=json.dumps({"name": name}).encode()
+    )
+    if status not in (200, 201):
+        raise RuntimeError(f"Création de la soirée refusée : HTTP {status}")
+    return json.loads(body)["code"]
 
 async def state(page, port: int, code: str) -> dict:
     """L'état vu par le serveur, lu depuis la page (même origine)."""

@@ -1,3 +1,4 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pywebpush>=2          # notifications poussées, même app fermée
+h11>=0.16.0
