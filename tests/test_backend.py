@@ -812,3 +812,13 @@ def test_oversized_on_demand_clip_is_refused():
             emitter.send_json({"type": "clip", "chalet_id": "m", "clip": "x" * (main.MAX_CLIP_BYTES + 1)})
             recv_until(emitter, "listen_failed")
             assert party.chalets["m"].clip is None
+
+
+def test_csp_header():
+    """Audit du 25/11/2026 : CSP stricte sur la page, script inline seulement sur /admin."""
+    client = TestClient(app)
+    csp = client.get("/").headers["content-security-policy"]
+    assert "script-src 'self';" in csp
+    assert "frame-ancestors 'none'" in csp
+    admin = client.get("/admin").headers["content-security-policy"]
+    assert "script-src 'self' 'unsafe-inline'" in admin
