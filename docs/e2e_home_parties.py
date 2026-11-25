@@ -14,7 +14,7 @@ async def main():
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
-                ctx = await browser.new_context(bypass_csp=True, bypass_csp=True)
+                ctx = await browser.new_context(bypass_csp=True)
                 page = await ctx.new_page()
                 await page.goto(f"http://127.0.0.1:{port}/")
                 assert await page.locator("#party-chips .chip").count() == 0
@@ -68,7 +68,7 @@ async def main():
                 await page.wait_for_function("!document.querySelector('#party-chips').textContent.includes('Supprimée')")
                 assert await page.locator("#party-chips .chip").count() == 2
 
-                outsider = await browser.new_context(bypass_csp=True, bypass_csp=True)
+                outsider = await browser.new_context(bypass_csp=True)
                 other_page = await outsider.new_page()
                 await other_page.goto(f"http://127.0.0.1:{port}/")
                 assert await other_page.locator("#party-chips .chip").count() == 0, "Pas de liste publique des soirées"
