@@ -742,7 +742,8 @@ async def security_headers(request: Request, call_next):
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob:; "
-        f"connect-src 'self' wss://{request.url.hostname}; "
+        # wss: pour le WebSocket (les vieux Safari n'appliquent pas 'self' aux ws)
+        "connect-src 'self' wss:; "
         "worker-src 'self'; manifest-src 'self'; "
         "base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
     )

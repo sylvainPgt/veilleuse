@@ -48,8 +48,8 @@ async def main() -> None:
     async with async_playwright() as p:
         b = await p.chromium.launch(args=["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"])
         try:
-            ctx_ch = await b.new_context(viewport=M, permissions=["microphone"], locale="fr-FR")
-            ctx_sa = await b.new_context(viewport=M, locale="fr-FR")
+            ctx_ch = await b.new_context(bypass_csp=True, viewport=M, permissions=["microphone"], locale="fr-FR")
+            ctx_sa = await b.new_context(bypass_csp=True, viewport=M, locale="fr-FR")
             errs: list[str] = []
 
             r = await ctx_ch.request.post(BASE + "/api/parties", data={"name": "test redémarrage"})

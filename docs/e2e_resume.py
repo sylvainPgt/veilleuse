@@ -26,7 +26,7 @@ async def main() -> None:
         b = await p.chromium.launch(args=MIC_ARGS)
         try:
             errs: list[str] = []
-            ctx = await b.new_context(viewport=MOBILE, permissions=["microphone"], locale="fr-FR")
+            ctx = await b.new_context(bypass_csp=True, viewport=MOBILE, permissions=["microphone"], locale="fr-FR")
             code = create_party(PORT, "Reprise")
 
             # ---- 1. la salle revient sur ses tuiles ----
