@@ -40,7 +40,7 @@ async def main() -> None:
         try:
             errs: list[str] = []
             # tactile activé : on veut pouvoir taper, pas seulement cliquer
-            ctx = await b.new_context(viewport=MOBILE, locale="fr-FR", has_touch=True)
+            ctx = await b.new_context(bypass_csp=True, viewport=MOBILE, locale="fr-FR", has_touch=True)
             code = create_party(PORT, "Appuis")
 
             async with Emitter(PORT, code, "alpha", "Alpha", "Léo et Jade") as alpha, \

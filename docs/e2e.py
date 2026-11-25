@@ -17,7 +17,7 @@ M = {"width": 390, "height": 844}
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(args=["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=no-user-gesture-required"])
-        ctx = await b.new_context(viewport=M, device_scale_factor=2, permissions=["microphone"], locale="fr-FR")
+        ctx = await b.new_context(bypass_csp=True, viewport=M, device_scale_factor=2, permissions=["microphone"], locale="fr-FR")
         errors = []
         # La soirée doit exister : on la crée par l'API, comme le ferait l'hôte.
         r = await ctx.request.post(f"{BASE}/api/parties", data={"name": "anniv sylvain"})
@@ -51,7 +51,7 @@ async def main():
         await ch.screenshot(path="docs/04-chalet-veille.png")
         # second chalet : contexte séparé — deux téléphones ne partagent pas leur stockage,
         # et l'identifiant d'appareil est justement mémorisé par téléphone
-        ctx2 = await b.new_context(viewport=M, device_scale_factor=2, permissions=["microphone"], locale="fr-FR")
+        ctx2 = await b.new_context(bypass_csp=True, viewport=M, device_scale_factor=2, permissions=["microphone"], locale="fr-FR")
         ch2 = await ctx2.new_page(); ch2.on("pageerror", lambda e: errors.append(("chalet2", str(e))))
         await ch2.goto(BASE + "/")
         await ch2.click("button[data-role=chalet]")

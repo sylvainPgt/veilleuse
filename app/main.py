@@ -733,6 +733,20 @@ async def security_headers(request: Request, call_next):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     resp.headers.setdefault("X-Frame-Options", "DENY")
+    # CSP : tout vient du serveur lui-même. /admin garde un script inline.
+    script_src = "'self' 'unsafe-inline'" if request.url.path.startswith("/admin") else "'self'"
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        f"script-src {script_src}; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
+        # wss: pour le WebSocket (les vieux Safari n'appliquent pas 'self' aux ws)
+        "connect-src 'self' wss:; "
+        "worker-src 'self'; manifest-src 'self'; "
+        "base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+    )
     if request.url.path.startswith("/api/"):
         # jamais de cache : un clip audio ou un état ne doit pas survivre dans un navigateur
         resp.headers["Cache-Control"] = "no-store, private"

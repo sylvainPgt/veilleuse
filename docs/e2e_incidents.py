@@ -29,7 +29,7 @@ async def main() -> None:
         b = await p.chromium.launch()
         try:
             errs: list[str] = []
-            ctx = await b.new_context(viewport=MOBILE, locale="fr-FR")
+            ctx = await b.new_context(bypass_csp=True, viewport=MOBILE, locale="fr-FR")
             code = create_party(PORT, "Incidents")
 
             # ---- 1. service worker : portée racine et `ready` qui se résout ----
